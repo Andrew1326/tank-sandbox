@@ -2,7 +2,7 @@ import GUI from 'lil-gui';
 import { SimWorld, STEP } from './sim/world';
 import { HULLS, HullParams, defaultSim } from './sim/params';
 import { Tank, TankInput, noInput } from './sim/tank';
-import { SPAWN, addCrates, addTargets } from './sim/setup';
+import { addCrates, addTargets, spawnPoint } from './sim/setup';
 import { View } from './render/view';
 import { NetClient } from './net/client';
 import { NET_PORT } from './net/protocol';
@@ -12,7 +12,8 @@ const query = new URLSearchParams(location.search);
 const online = query.has('online');
 const COLORS = { me: 0x2f9e8f, player: 0x3a78c9, bot: 0xb5653a };
 
-const sim = await SimWorld.create();
+const sim = await SimWorld.create(online ? 'yard' : query.get('map') ?? 'range');
+const SPAWN = spawnPoint(sim, 0);
 const view = new View(document.getElementById('c') as HTMLCanvasElement, sim);
 const hud = document.getElementById('hud')!;
 
@@ -68,11 +69,12 @@ if (online) {
     onShots: (s) => view.showShots(s),
     onKills,
     onTune: () => gui.controllersRecursive().forEach((c) => c.updateDisplay()),
+    onMap: () => view.buildLevel(),
     before: () => view.beginCorrection(),
     after: () => view.endCorrection(),
   }, state.hull, state.name);
 } else {
-  player = sim.addTank(hulls[state.hull], SPAWN, 0);
+  player = sim.addTank(hulls[state.hull], SPAWN, SPAWN.yaw);
   view.addTank(player, COLORS.me);
   targets = addTargets(sim, hulls);
   targets.forEach((t) => view.addTank(t, COLORS.bot));
@@ -106,7 +108,7 @@ addEventListener('keydown', (e) => {
   if (e.repeat) return;
   keys.add(e.code);
   if (e.code === 'KeyR') { if (net) net.command('upright'); else player?.upright(); }
-  if (e.code === 'KeyT') { if (net) net.command('respawn'); else player?.place(SPAWN, 0); resetMeters(); }
+  if (e.code === 'KeyT') { if (net) net.command('respawn'); else player?.place(SPAWN, SPAWN.yaw); resetMeters(); }
   if (e.code === 'KeyV') view.showRays = !view.showRays;
 });
 addEventListener('keyup', (e) => keys.delete(e.code));

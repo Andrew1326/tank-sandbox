@@ -13,11 +13,12 @@ interface Client {
   last: TankInput;
   slot: number;
   name: string;
+  seen: number;
   k: number;
   d: number;
 }
 
-const sim = await SimWorld.create();
+const sim = await SimWorld.create(process.env.MAP ?? 'yard');
 const hulls: Record<string, HullParams> = Object.fromEntries(Object.entries(HULLS).map(([k, v]) => [k, { ...v }]));
 let targets = addTargets(sim, hulls);
 addCrates(sim);
@@ -39,20 +40,22 @@ wss.on('connection', (ws) => {
     if (m.t === 'hello') {
       if (c) return;
       const slot = freeSlot();
-      const tank = sim.addTank(hulls[m.hull] ?? hulls.Dart, spawnPoint(slot), 0);
-      clients.set(ws, { ws, tank, queue: [], ack: 0, last: noInput(), slot, name: cleanName(m.name, tank.id), k: 0, d: 0 });
-      send(ws, { t: 'welcome', id: tank.id, sim: sim.params, hulls });
+      const sp = spawnPoint(sim, slot);
+      const tank = sim.addTank(hulls[m.hull] ?? hulls.Dart, sp, sp.yaw);
+      clients.set(ws, { ws, tank, queue: [], ack: 0, last: noInput(), slot, name: cleanName(m.name, tank.id), seen: performance.now(), k: 0, d: 0 });
+      send(ws, { t: 'welcome', id: tank.id, map: sim.map.name, sim: sim.params, hulls });
       console.log(`+ player ${tank.id} (${tank.hull.name}), ${clients.size} online`);
       return;
     }
     if (!c) return;
+    c.seen = performance.now();
     if (m.t === 'in') {
       if (typeof m.seq === 'number' && c.queue.length < 120) c.queue.push({ seq: m.seq, input: cleanInput(m.i) });
     } else if (m.t === 'ping') {
       send(ws, { t: 'pong', c: m.c });
     } else if (m.t === 'cmd') {
       if (m.c === 'upright' && c.tank.dead <= 0) c.tank.upright();
-      if (m.c === 'respawn' && c.tank.dead <= 0) c.tank.place(spawnPoint(c.slot), 0);
+      if (m.c === 'respawn' && c.tank.dead <= 0) c.tank.place(spawnPoint(sim, c.slot), spawnPoint(sim, c.slot).yaw);
       if (m.c === 'targets') {
         for (const t of targets) sim.removeTank(t);
         targets = addTargets(sim, hulls);
@@ -63,8 +66,8 @@ wss.on('connection', (ws) => {
       const id = c.tank.id;
       sim.removeTank(c.tank);
       c.tank = sim.addTank(hulls[m.hull], { x: p.x, y: p.y + 0.6, z: p.z }, 0, id);
-      c.tank.home = spawnPoint(c.slot);
-      c.tank.homeYaw = 0;
+      c.tank.home = { ...spawnPoint(sim, c.slot) };
+      c.tank.homeYaw = spawnPoint(sim, c.slot).yaw;
     } else if (m.t === 'tune') {
       // Sandbox convenience: anyone connected can retune the shared world.
       for (const [k, v] of Object.entries(m.sim ?? {})) if (k in sim.params && typeof v === typeof (sim.params as any)[k]) (sim.params as any)[k] = v;
@@ -106,6 +109,8 @@ function step() {
   kills.push(...sim.kills);
   sim.kills.length = 0;
   tick++;
+  // A tab that vanished without closing its socket should not leave a tank behind.
+  if (tick % 60 === 0) for (const c of clients.values()) if (performance.now() - c.seen > 6000) c.ws.terminate();
   if (tick % SNAP_EVERY === 0 && clients.size > 0) {
     const world = sim.capture();
     const score: ScoreRow[] = [...clients.values()].map((c) => ({ id: c.tank.id, name: c.name, k: c.k, d: c.d }));
@@ -125,4 +130,5 @@ setInterval(() => {
   last = now;
   while (acc >= STEP) { step(); acc -= STEP; }
 }, 4);
+console.log(`map: ${sim.map.name}`);
 console.log(`tank-sandbox server on ws://0.0.0.0:${process.env.PORT ?? NET_PORT}`);

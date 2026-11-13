@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import RAPIER from '@dimforge/rapier3d-compat';
 import type { SimWorld, Crate } from '../sim/world';
 import type { Tank } from '../sim/tank';
 import { DEG } from '../sim/vec';
@@ -97,26 +98,7 @@ export class View {
     this.sun = sun;
     this.scene.add(sun, sun.target);
 
-    const grid = gridTexture();
-    for (const b of sim.level) {
-      const isGround = b.h[0] > 100;
-      const mat = new THREE.MeshStandardMaterial({ color: isGround ? 0xffffff : b.color, roughness: 0.9 });
-      if (isGround) {
-        mat.map = grid;
-        grid.repeat.set((b.h[0] * 2) / 10, (b.h[2] * 2) / 10);
-      }
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(b.h[0] * 2, b.h[1] * 2, b.h[2] * 2), mat);
-      mesh.position.set(b.p[0], b.p[1], b.p[2]);
-      mesh.rotation.set((b.pitch ?? 0) * DEG, (b.yaw ?? 0) * DEG, 0, 'YXZ');
-      mesh.receiveShadow = true;
-      mesh.castShadow = !isGround && !b.deco;
-      this.scene.add(mesh);
-      if (b.label) {
-        const sp = labelSprite(b.label);
-        sp.position.set(b.p[0] + (b.deco ? -5.5 : 0), b.p[1] + b.h[1] + (b.deco ? 0.8 : 1.4), b.p[2]);
-        this.scene.add(sp);
-      }
-    }
+    this.buildLevel();
 
     this.rayLines = new THREE.LineSegments(
       new THREE.BufferGeometry(),
@@ -130,6 +112,33 @@ export class View {
   }
 
   private sun: THREE.DirectionalLight;
+  private levelGroup = new THREE.Group();
+
+  buildLevel() {
+    this.scene.remove(this.levelGroup);
+    this.levelGroup = new THREE.Group();
+    this.scene.add(this.levelGroup);
+    const grid = gridTexture();
+    for (const b of this.sim.level) {
+      const isGround = !!b.ground;
+      const mat = new THREE.MeshStandardMaterial({ color: isGround ? 0xffffff : b.color, roughness: 0.9 });
+      if (isGround) {
+        mat.map = grid;
+        grid.repeat.set((b.h[0] * 2) / 10, (b.h[2] * 2) / 10);
+      }
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(b.h[0] * 2, b.h[1] * 2, b.h[2] * 2), mat);
+      mesh.position.set(b.p[0], b.p[1], b.p[2]);
+      mesh.rotation.set((b.pitch ?? 0) * DEG, (b.yaw ?? 0) * DEG, 0, 'YXZ');
+      mesh.receiveShadow = true;
+      mesh.castShadow = !isGround && !b.deco;
+      this.levelGroup.add(mesh);
+      if (b.label) {
+        const sp = labelSprite(b.label);
+        sp.position.set(b.p[0] + (b.deco ? -5.5 : 0), b.p[1] + b.h[1] + (b.deco ? 0.8 : 1.4), b.p[2]);
+        this.levelGroup.add(sp);
+      }
+    }
+  }
 
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
@@ -356,6 +365,16 @@ export class View {
         target.y + this.camHeight,
         target.z + Math.cos(this.camYaw) * this.camDist,
       );
+      // Keep the camera on our side of walls: pull it in to just before whatever is in the way.
+      const eye = new THREE.Vector3(target.x, target.y + 1.6, target.z);
+      const to = desired.clone().sub(eye);
+      const far = to.length();
+      to.normalize();
+      const blocked = this.sim.world.castRay(new RAPIER.Ray(eye, to), far, true, undefined, undefined, undefined, fv.tank.body);
+      if (blocked && blocked.timeOfImpact < far) {
+        desired.copy(eye).addScaledVector(to, Math.max(1.5, blocked.timeOfImpact - 0.6));
+        this.camPos.copy(desired);
+      }
       if (!this.camReady) this.camPos.copy(desired);
       this.camPos.lerp(desired, 1 - Math.exp(-dt * 8));
       this.camReady = true;

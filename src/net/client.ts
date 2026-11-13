@@ -12,6 +12,7 @@ export interface NetHooks {
   onShots?: (s: ShotEvent[]) => void;
   onKills?: (k: KillEvent[]) => void;
   onTune?: () => void;
+  onMap?: () => void;
   before?: () => void; // just before the world is rewound to a snapshot
   after?: () => void; // after it has been replayed back to now
 }
@@ -67,6 +68,7 @@ export class NetClient {
   private receive(m: ServerMsg) {
     if (m.t === 'welcome') {
       this.id = m.id;
+      if (m.map !== this.sim.map.name) { this.sim.loadMap(m.map); this.hooks.onMap?.(); }
       this.applyTune(m);
     } else if (m.t === 'tune') {
       this.applyTune(m);

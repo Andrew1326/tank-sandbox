@@ -14,7 +14,7 @@ export type ClientMsg =
   | { t: 'tune'; sim: SimParams; hulls: Record<string, HullParams> };
 
 export type ServerMsg =
-  | { t: 'welcome'; id: number; sim: SimParams; hulls: Record<string, HullParams> }
+  | { t: 'welcome'; id: number; map: string; sim: SimParams; hulls: Record<string, HullParams> }
   | ({ t: 'snap'; tick: number; ack: number; players: number; shots: ShotEvent[]; kills: KillEvent[]; score: ScoreRow[] } & WorldSnap)
   | { t: 'pong'; c: number }
   | { t: 'tune'; sim: SimParams; hulls: Record<string, HullParams> };

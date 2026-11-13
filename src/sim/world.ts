@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import { buildLevel, Box } from './level';
+import { MAPS, GameMap, Box } from './level';
 import { HullParams, SimParams, defaultSim } from './params';
 import { Tank, TankInput, TankState, ShotEvent, KillEvent, noInput } from './tank';
 import { V3, qMul, qYaw, qPitch, DEG } from './vec';
@@ -22,21 +22,32 @@ export interface Crate {
 export class SimWorld {
   world: RAPIER.World;
   params: SimParams = defaultSim();
-  level: Box[] = buildLevel();
+  map: GameMap = MAPS.range;
+  private statics: RAPIER.Collider[] = [];
+  get level(): Box[] { return this.map.boxes; }
   tanks: Tank[] = [];
   crates: Crate[] = [];
   shots: ShotEvent[] = [];
   kills: KillEvent[] = [];
   time = 0;
 
-  static async create(): Promise<SimWorld> {
+  static async create(map = 'range'): Promise<SimWorld> {
     await RAPIER.init();
-    return new SimWorld();
+    const w = new SimWorld();
+    w.loadMap(map);
+    return w;
   }
 
   private constructor() {
     this.world = new RAPIER.World({ x: 0, y: -this.params.gravity, z: 0 });
     this.world.timestep = STEP;
+  }
+
+  // Swap the static scenery; tanks and crates are left alone.
+  loadMap(name: string) {
+    this.map = MAPS[name] ?? MAPS.range;
+    for (const c of this.statics) this.world.removeCollider(c, true);
+    this.statics = [];
     for (const b of this.level) {
       if (b.deco) continue;
       const rotQ = qMul(qYaw((b.yaw ?? 0) * DEG), qPitch((b.pitch ?? 0) * DEG));
@@ -44,7 +55,7 @@ export class SimWorld {
         .setTranslation(b.p[0], b.p[1], b.p[2])
         .setRotation(rotQ)
         .setFriction(0.6);
-      this.world.createCollider(desc);
+      this.statics.push(this.world.createCollider(desc));
     }
   }
 

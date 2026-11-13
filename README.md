@@ -19,6 +19,8 @@ The server runs the same `src/sim` code at 60 Hz and sends a snapshot every seco
 
 Tanks have health; a destroyed tank sits as a wreck, then returns to its spawn with a short shield. The server keeps the score. `npx tsx scripts/combat.ts` checks damage and respawn headlessly.
 
+Maps live in `src/sim/level.ts`: `range` (the tuning ground, default offline) and `yard` (a walled arena, default on the server; `MAP=range npm run server` to change, `?map=yard` to drive it offline). `npx tsx scripts/yard.ts` checks its spawns and ramps; `npx tsx scripts/bots.ts 4 90 40` runs scripted players against the server.
+
 Tuning sliders in online mode change the server's numbers for everyone connected.
 
 Add `?shot` to the URL when taking automated screenshots.
