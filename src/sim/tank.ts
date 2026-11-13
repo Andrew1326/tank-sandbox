@@ -357,7 +357,12 @@ export class Tank {
       end = add(pivot, scale(aim, hit.timeOfImpact));
       const other = hit.collider.parent();
       if (other && other.isDynamic()) {
-        other.applyImpulseAtPoint(scale(aim, P.impact), end, true);
+        // Pull the push point towards the target's centre-of-mass height so a hit turns and shoves more than it tips.
+        const oc = other.worldCom();
+        const oUp = rot(other.rotation(), v3(0, 1, 0));
+        const lift = dot(sub(end, oc), oUp);
+        const at = sub(end, scale(oUp, lift * (1 - P.impactTilt)));
+        other.applyImpulseAtPoint(scale(aim, P.impact), at, true);
         if (other.userData instanceof Tank) other.userData.shotHit = true;
         struck = true;
       }

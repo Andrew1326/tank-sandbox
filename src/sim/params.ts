@@ -37,6 +37,7 @@ export interface SimParams {
   reload: number;
   impact: number;
   recoil: number;
+  impactTilt: number; // 1 = hit pushes where it lands, 0 = pushes through the centre of mass height
   range: number;
   autoAimUp: number;
   autoAimDown: number;
@@ -87,6 +88,7 @@ export const defaultSim = (): SimParams => ({
   reload: 1.5,
   impact: 7000,
   recoil: 3500,
+  impactTilt: 0.4,
   range: 300,
   autoAimUp: 8,
   autoAimDown: 10,

@@ -7,7 +7,7 @@ import { View } from './render/view';
 import { NetClient } from './net/client';
 import { NET_PORT } from './net/protocol';
 
-const STORE = 'tank-sandbox-v8';
+const STORE = 'tank-sandbox-v9';
 const query = new URLSearchParams(location.search);
 const online = query.has('online');
 const COLORS = { me: 0x2f9e8f, player: 0x3a78c9, bot: 0xb5653a };
@@ -218,6 +218,7 @@ gun.add(P, 'turretSpeed', 20, 250, 1).name('Turret speed °/s');
 gun.add(P, 'turretAccel', 50, 1500, 10).name('Turret accel');
 gun.add(P, 'impact', 0, 40000, 100).name('Impact on target N·s');
 gun.add(P, 'recoil', 0, 40000, 100).name('Recoil on shooter N·s');
+gun.add(P, 'impactTilt', 0, 1, 0.05).name('Hit rocks the target (0–1)');
 gun.add(P, 'autoAimUp', 0, 25, 1).name('Auto-aim up °');
 gun.add(P, 'autoAimDown', 0, 25, 1).name('Auto-aim down °');
 gun.add(P, 'fireDelay', 0, 2, 0.05).name('Delay before shot s');
