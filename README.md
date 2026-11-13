@@ -21,7 +21,7 @@ Tanks have health; a destroyed tank sits as a wreck, then returns to its spawn w
 
 Maps live in `src/sim/level.ts`: `range` (the tuning ground, default offline) and `yard` (a walled arena, default on the server; `MAP=range npm run server` to change, `?map=yard` to drive it offline). `npx tsx scripts/yard.ts` checks its spawns and ramps; `npx tsx scripts/bots.ts 4 90 40` runs scripted players against the server.
 
-Guns are `Slug` (single shot), `Lance` (charged beam) and `Pulse` (stream of bolts); pick hull and gun in the panel. On a map with bases the server runs capture the flag with two teams, Amber and Azure. `npx tsx scripts/guns.ts` and `npx tsx scripts/ctf.ts` check weapons and flag rules; `?showcase` lines up every hull and gun to look at the models (`src/render/models.ts`).
+Guns are `Slug` (single shot), `Lance` (charged beam that goes on through several tanks), `Pulse` (stream of bolts), `Ember` (flame: the target heats up and keeps burning) and `Frost` (the target ices over and slows down; fire and ice cancel). `npx tsx scripts/status.ts` checks heat, cold and piercing. Pick hull and gun in the panel. On a map with bases the server runs capture the flag with two teams, Amber and Azure. `npx tsx scripts/guns.ts` and `npx tsx scripts/ctf.ts` check weapons and flag rules; `?showcase` lines up every hull and gun to look at the models (`src/render/models.ts`).
 
 All art and sound is generated in code: `src/render/textures.ts` draws the surfaces, camouflage and sky, `src/render/fx.ts` runs smoke, dust, fire, debris and ground marks from fixed pools, `src/render/audio.ts` synthesises the engine, guns and explosions.
 

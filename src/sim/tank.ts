@@ -28,6 +28,7 @@ export interface TankState {
   ty: number; tv: number; cd: number; pe: number; bo: number;
   lx: number; lz: number; pu: boolean;
   hp: number; de: number; iv: number; hm: V3; hy: number;
+  tp: number; en: number; sf: boolean; bb: number;
 }
 
 export interface KillEvent {
@@ -74,14 +75,7 @@ export function applyHit(P: SimParams, gun: GunParams, by: number, team: number,
   other.applyTorqueImpulse(cross(sub(at, oc), j), true);
   if (victim instanceof Tank) {
     victim.shotHit = true;
-    if (victim.dead <= 0 && victim.shield <= 0) {
-      victim.hp -= gun.damage;
-      if (victim.hp <= 0) {
-        victim.hp = 0;
-        victim.dead = P.respawnTime;
-        ev.kills.push({ by, victim: victim.id, at: { ...other.translation() } });
-      }
-    }
+    victim.hurt(gun.damage, by, P, ev);
   }
   return true;
 }
@@ -107,6 +101,10 @@ export class Tank {
   id = 0;
   bot = false;
   input: TankInput = noInput();
+  temp = 0; // -1 frozen solid .. +1 white hot
+  energy = 1; // stream guns: how full the tank is
+  streaming = false; // spraying this tick
+  burnBy = 0; // who lit the fire, for the kill credit
   hp = 0;
   dead = 0; // seconds until respawn, 0 = alive
   shield = 0; // seconds of spawn protection left
@@ -191,6 +189,16 @@ export class Tank {
     this.snapshot();
   }
 
+  hurt(amount: number, by: number, P: SimParams, ev: SimEvents) {
+    if (this.dead > 0 || this.shield > 0) return;
+    this.hp -= amount;
+    if (this.hp <= 0) {
+      this.hp = 0;
+      this.dead = P.respawnTime;
+      ev.kills.push({ by, victim: this.id, at: { ...this.body.translation() } });
+    }
+  }
+
   // 0..1 while a delayed shot is winding up.
   get charge(): number {
     return this.pending >= 0 && this.gun.delay > 0 ? 1 - this.pending / this.gun.delay : 0;
@@ -203,6 +211,7 @@ export class Tank {
       ty: this.turretYaw, tv: this.turretVel, cd: this.cooldown, pe: this.pending, bo: this.boostLeft,
       lx: this.lastVx, lz: this.lastVz, pu: this.pushed,
       hp: this.hp, de: this.dead, iv: this.shield, hm: { ...this.home }, hy: this.homeYaw,
+      tp: this.temp, en: this.energy, sf: this.streaming, bb: this.burnBy,
     };
   }
 
@@ -215,6 +224,7 @@ export class Tank {
     this.turretYaw = s.ty; this.turretVel = s.tv; this.cooldown = s.cd; this.pending = s.pe; this.boostLeft = s.bo;
     this.lastVx = s.lx; this.lastVz = s.lz; this.pushed = s.pu;
     this.hp = s.hp; this.dead = s.de; this.shield = s.iv; this.home = { ...s.hm }; this.homeYaw = s.hy;
+    this.temp = s.tp; this.energy = s.en; this.streaming = s.sf; this.burnBy = s.bb;
     this.shotHit = false;
   }
 
@@ -254,6 +264,8 @@ export class Tank {
         this.shield = P.spawnShield;
         this.turretYaw = this.turretVel = 0;
         this.boostLeft = 0;
+        this.temp = 0;
+        this.energy = 1;
       }
     }
     if (this.dead <= 0 && b.translation().y < -15) {
@@ -263,14 +275,27 @@ export class Tank {
       ev.kills.push({ by: this.id, victim: this.id, at: { ...b.translation() } });
     }
     const alive = this.dead <= 0;
+    // Heat burns and fades; cold just fades. A wreck cools off at once.
+    if (!alive) this.temp = 0;
+    if (this.temp > 0) {
+      this.hurt(this.temp * P.burnDps * dt, this.burnBy, P, ev);
+      this.temp = Math.max(0, this.temp - P.heatFade * dt);
+    } else if (this.temp < 0) {
+      this.temp = Math.min(0, this.temp + P.coldFade * dt);
+    }
+    const chill = 1 - Math.max(0, -this.temp) * P.freezeSlow; // 1 = unaffected
     const h = this.hull;
     const m = h.mass;
     b.setAngularDamping(P.angularDamping);
     if (input.boost) this.boostLeft = P.boostTime;
     this.boostLeft = Math.max(0, this.boostLeft - dt);
     const boosted = this.boostLeft > 0;
-    const topSpeed = h.topSpeed * (boosted ? P.boostSpeed : 1);
-    const accel = h.accel * (boosted ? P.boostAccel : 1);
+    let topSpeed = h.topSpeed * (boosted ? P.boostSpeed : 1);
+    let accel = h.accel * (boosted ? P.boostAccel : 1);
+    // Ice in the running gear.
+    const drag = 1 - Math.max(0, -this.temp) * P.freezeSlow;
+    topSpeed *= drag;
+    accel *= drag;
 
     // A sudden shove from a collision is mostly soaked up; steady pushing is untouched.
     const v0 = b.linvel();
@@ -387,7 +412,7 @@ export class Tank {
 
       // Turning: same idea on the yaw rate.
       const w = dot(av, up);
-      let targetW = input.steer * h.turnSpeed * DEG;
+      let targetW = input.steer * h.turnSpeed * DEG * chill;
       if (P.invertSteerInReverse && vF < -0.5) targetW = -targetW;
       const sameWay = targetW !== 0 && w * targetW >= 0;
       const aW = (sameWay ? h.turnAccel : h.antiTurnAccel) * DEG * (this.pushed ? 0.25 : 1);
@@ -399,7 +424,7 @@ export class Tank {
     }
 
     // Turret
-    const tSpeed = this.gun.turretSpeed * DEG;
+    const tSpeed = this.gun.turretSpeed * DEG * chill;
     let tTarget = input.turret * tSpeed;
     if (input.center && input.turret === 0) {
       const wrapped = Math.atan2(Math.sin(this.turretYaw), Math.cos(this.turretYaw));
@@ -409,6 +434,17 @@ export class Tank {
     const tA = this.gun.turretAccel * DEG * dt;
     this.turretVel += clamp(tTarget - this.turretVel, -tA, tA);
     this.turretYaw += this.turretVel * dt;
+
+    // Stream guns spray for as long as fire is held and the tank is not empty.
+    if (this.gun.kind === 'stream') {
+      this.streaming = alive && input.fire && this.energy > 0;
+      this.energy = this.streaming ? Math.max(0, this.energy - dt / this.gun.tank) : Math.min(1, this.energy + dt / this.gun.refill);
+      const v1s = b.linvel();
+      this.lastVx = v1s.x;
+      this.lastVz = v1s.z;
+      return;
+    }
+    this.streaming = false;
 
     // Gun
     this.cooldown -= dt;
@@ -457,12 +493,32 @@ export class Tank {
       ev.shots.push({ by: this.id, gun: g.name, k: 1, from: muzzle, to: muzzle, hit: false });
       return;
     }
+    // Follow the line through as many tanks as the gun can pierce; scenery always stops it.
     let end = add(pivot, scale(aim, g.range));
     let struck = false;
-    if (hit) {
-      end = add(pivot, scale(aim, hit.timeOfImpact));
-      const other = hit.collider.parent();
-      if (other) struck = applyHit(P, g, this.id, this.team, aim, end, other, ev);
+    const passed = new Set<number>([b.handle]);
+    const through = { ...g };
+    for (let n = 0; n <= g.pierce; n++) {
+      // The beam has some height to it: past the first tank, also look a little below and above the line,
+      // so a lower hull standing behind a taller one is still caught.
+      const probe = (lift: number) => this.world.castRay(new this.R.Ray(add(pivot, scale(up, lift)), aim), g.range, true, undefined, undefined, undefined, undefined, (c) => !passed.has(c.parent()?.handle ?? -1));
+      let h3 = probe(0);
+      if (n > 0) {
+        for (const lift of [-0.35, -0.7, 0.35]) {
+          const alt = probe(lift);
+          if (alt && alt.collider.parent()?.isDynamic() && (!h3 || !h3.collider.parent()?.isDynamic() || alt.timeOfImpact < h3.timeOfImpact)) h3 = alt;
+        }
+      }
+      if (!h3) { end = add(pivot, scale(aim, g.range)); break; }
+      end = add(pivot, scale(aim, h3.timeOfImpact));
+      const other = h3.collider.parent();
+      if (!other || !applyHit(P, through, this.id, this.team, aim, end, other, ev)) break;
+      struck = true;
+      passed.add(other.handle);
+      // Each tank it goes through takes some of the sting out of it.
+      through.damage *= g.pierceKeep;
+      through.impact *= g.pierceKeep;
+      if (n === g.pierce) break;
     }
     ev.shots.push({ by: this.id, gun: g.name, k: 0, from: muzzle, to: end, hit: struck });
   }

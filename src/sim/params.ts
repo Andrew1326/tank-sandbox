@@ -20,8 +20,8 @@ export interface HullParams {
 
 export interface GunParams {
   name: string;
-  kind: 'hitscan' | 'projectile';
-  damage: number;
+  kind: 'hitscan' | 'projectile' | 'stream';
+  damage: number; // per hit, or per second for a stream
   reload: number; // seconds between shots, not counting the delay
   delay: number; // charge-up between pressing fire and the shot
   impact: number; // N·s on the target
@@ -30,6 +30,13 @@ export interface GunParams {
   turretAccel: number;
   range: number;
   projSpeed: number; // projectile guns only
+  // stream guns only
+  cone: number; // half-angle of the spray, degrees
+  tank: number; // seconds of continuous fire in a full tank
+  refill: number; // seconds to refill from empty
+  temp: number; // how fast it heats (+) or chills (-) the target, per second
+  pierce: number; // how many tanks a shot goes on through after the first
+  pierceKeep: number; // share of damage and impact left after each one
 }
 
 export interface SimParams {
@@ -50,6 +57,10 @@ export interface SimParams {
   impactTilt: number; // 1 = hit pushes where it lands, 0 = pushes through the centre of mass height
   respawnTime: number;
   spawnShield: number;
+  burnDps: number; // damage per second to a fully heated tank
+  heatFade: number; // how fast heat wears off, per second
+  coldFade: number;
+  freezeSlow: number; // share of speed lost when fully frozen
   flagReturn: number; // seconds a dropped flag waits before going home
   autoAimUp: number;
   autoAimDown: number;
@@ -82,9 +93,13 @@ export const HULLS: Record<string, HullParams> = {
 
 // Slug: the all-rounder. Lance: slow charged shot that hits very hard. Pulse: a stream of slow bolts for close range.
 export const GUNS: Record<string, GunParams> = {
-  Slug: { name: 'Slug', kind: 'hitscan', damage: 60, reload: 1.5, delay: 0, impact: 7000, recoil: 3500, turretSpeed: 90, turretAccel: 400, range: 300, projSpeed: 0 },
-  Lance: { name: 'Lance', kind: 'hitscan', damage: 170, reload: 4.2, delay: 0.9, impact: 15000, recoil: 9000, turretSpeed: 60, turretAccel: 300, range: 400, projSpeed: 0 },
-  Pulse: { name: 'Pulse', kind: 'projectile', damage: 16, reload: 0.28, delay: 0, impact: 1300, recoil: 350, turretSpeed: 115, turretAccel: 500, range: 85, projSpeed: 70 },
+  Slug: { name: 'Slug', kind: 'hitscan', damage: 60, reload: 1.5, delay: 0, impact: 7000, recoil: 3500, turretSpeed: 90, turretAccel: 400, range: 300, projSpeed: 0, cone: 0, tank: 0, refill: 0, temp: 0, pierce: 0, pierceKeep: 1 },
+  Lance: { name: 'Lance', kind: 'hitscan', damage: 170, reload: 4.2, delay: 0.9, impact: 15000, recoil: 9000, turretSpeed: 60, turretAccel: 300, range: 400, projSpeed: 0, cone: 0, tank: 0, refill: 0, temp: 0, pierce: 4, pierceKeep: 0.75 },
+  Pulse: { name: 'Pulse', kind: 'projectile', damage: 16, reload: 0.28, delay: 0, impact: 1300, recoil: 350, turretSpeed: 115, turretAccel: 500, range: 85, projSpeed: 70, cone: 0, tank: 0, refill: 0, temp: 0, pierce: 0, pierceKeep: 1 },
+  // Ember sets the target alight: it glows, and keeps burning after the flame stops.
+  Ember: { name: 'Ember', kind: 'stream', damage: 48, reload: 0, delay: 0, impact: 0, recoil: 0, turretSpeed: 120, turretAccel: 500, range: 17, projSpeed: 0, cone: 11, tank: 5, refill: 7, temp: 0.6, pierce: 0, pierceKeep: 1 },
+  // Frost does less damage but ices the target up, slowing its tracks and turret.
+  Frost: { name: 'Frost', kind: 'stream', damage: 36, reload: 0, delay: 0, impact: 0, recoil: 0, turretSpeed: 120, turretAccel: 500, range: 17, projSpeed: 0, cone: 11, tank: 6, refill: 8, temp: -0.55, pierce: 0, pierceKeep: 1 },
 };
 
 export const defaultSim = (): SimParams => ({
@@ -105,6 +120,10 @@ export const defaultSim = (): SimParams => ({
   impactTilt: 0.4,
   respawnTime: 4,
   spawnShield: 2,
+  burnDps: 20,
+  heatFade: 0.22,
+  coldFade: 0.18,
+  freezeSlow: 0.75,
   flagReturn: 20,
   autoAimUp: 8,
   autoAimDown: 10,

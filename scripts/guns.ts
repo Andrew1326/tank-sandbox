@@ -26,6 +26,6 @@ for (const g of Object.values(GUNS)) {
     sim.removeTank(shooter); sim.removeTank(target);
     sim.shells.length = 0;
   }
-  const dps = g.damage / (g.reload + g.delay);
-  console.log(`${g.name.padEnd(6)} ${g.kind.padEnd(10)} ${g.damage} dmg every ${(g.reload + g.delay).toFixed(2)} s = ${dps.toFixed(0)}/s, range ${g.range} m | destroys: ${out.join(', ')}`);
+  const dps = g.kind === "stream" ? g.damage : g.damage / (g.reload + g.delay);
+  console.log(`${g.name.padEnd(6)} ${g.kind.padEnd(10)} ${g.kind === "stream" ? `${g.damage} dmg/s for ${g.tank} s` : `${g.damage} dmg every ${(g.reload + g.delay).toFixed(2)} s = ${dps.toFixed(0)}/s`}, range ${g.range} m | destroys: ${out.join(', ')}`);
 }

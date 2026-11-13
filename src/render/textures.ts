@@ -166,6 +166,19 @@ export function camoTex(color: number, seed: number): THREE.CanvasTexture {
   });
 }
 
+// Rime ice: a pale glaze with needle crystals, mostly see-through.
+export const frostTex = () => canvas(256, (g, s) => {
+  const r = rng(77);
+  g.clearRect(0, 0, s, s);
+  g.fillStyle = 'rgba(214,240,255,0.55)'; g.fillRect(0, 0, s, s);
+  blotches(g, s, r, 14, 'rgba(255,255,255,0.5)', 60);
+  g.strokeStyle = 'rgba(255,255,255,0.9)'; g.lineWidth = 1.2;
+  for (let i = 0; i < 70; i++) {
+    const x = r() * s, y = r() * s, len = 6 + r() * 22;
+    for (let k = 0; k < 3; k++) { const a = r() * 6.28; g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); g.stroke(); }
+  }
+});
+
 // Soft round puff used for every smoke, dust and fire particle.
 export const puffTex = () => canvas(64, (g, s) => {
   const grad = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);

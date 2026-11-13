@@ -5,6 +5,7 @@ export class Sound {
   private noise!: AudioBuffer;
   private engine: { a: OscillatorNode; b: OscillatorNode; gain: GainNode; filter: BiquadFilterNode } | null = null;
   private chargeOsc: { osc: OscillatorNode; gain: GainNode } | null = null;
+  private sprays: Record<string, GainNode> = {};
   volume = 0.6;
   listener = { x: 0, z: 0, yaw: 0 };
 
@@ -99,6 +100,23 @@ export class Sound {
     this.tone(out, 'sine', 90, 24, 1.0, 1.2);
     this.burst(out, 1.3, 1.1, 2400, 60);
     this.burst(out, 0.2, 0.9, 9000, 500);
+  }
+
+  // Continuous roar of flame or hiss of frost; level 0..1 is how loud the nearest one is.
+  spray(kind: 'Ember' | 'Frost', level: number) {
+    if (!this.ctx) return;
+    let g = this.sprays[kind];
+    if (!g) {
+      if (level <= 0) return;
+      const src = this.ctx.createBufferSource(); src.buffer = this.noise; src.loop = true;
+      const f = this.ctx.createBiquadFilter();
+      if (kind === 'Ember') { f.type = 'lowpass'; f.frequency.value = 620; f.Q.value = 0.8; } else { f.type = 'highpass'; f.frequency.value = 2600; }
+      g = this.ctx.createGain(); g.gain.value = 0;
+      src.connect(f).connect(g).connect(this.master);
+      src.start();
+      this.sprays[kind] = g;
+    }
+    g.gain.setTargetAtTime(level * (kind === 'Ember' ? 0.9 : 0.35), this.ctx.currentTime, 0.06);
   }
 
   jingle(kind: 'good' | 'bad' | 'neutral') {

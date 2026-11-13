@@ -5,11 +5,12 @@ import type { ShotEvent, Tank } from '../sim/tank';
 import { DEG } from '../sim/vec';
 import { TEAM_COLORS } from '../sim/level';
 import { Running, TankMats, buildHull, buildTurret, makeMats } from './models';
-import { coverTex, crateTex, deckTex, gridTex, groundTex, metricBox, rampTex, skyTex, wallTex } from './textures';
+import { coverTex, crateTex, deckTex, frostTex, gridTex, groundTex, metricBox, rampTex, skyTex, wallTex } from './textures';
 import { Fx } from './fx';
 import { Sound } from './audio';
 
 const IDENTITY = new THREE.Quaternion();
+const CHAR = new THREE.Color(0x4a3026), ICE = new THREE.Color(0xbfe6ff), HOT = new THREE.Color(0xffa030);
 const V = (p: { x: number; y: number; z: number }) => new THREE.Vector3(p.x, p.y, p.z);
 
 function labelSprite(text: string): THREE.Sprite {
@@ -54,6 +55,8 @@ interface TankView {
   smoke: number;
   marked: THREE.Vector3; // where the last track mark was laid
   wasShielded: boolean;
+  ice: THREE.Mesh[]; // glaze that thickens as the tank freezes
+  burn: number; // paces the flames on a burning hull
 }
 
 export class View {
@@ -81,6 +84,7 @@ export class View {
   private mats: Record<string, THREE.Material>;
   private crateMat: THREE.Material;
   private clock = 0;
+  private frost = frostTex();
 
   constructor(canvas: HTMLCanvasElement, private sim: SimWorld) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: location.search.includes('shot') });
@@ -175,6 +179,17 @@ export class View {
     turret.position.y = roof;
     group.add(turret);
     group.traverse((o) => { o.castShadow = true; o.receiveShadow = true; });
+    const glowColor: Record<string, number> = { Ember: 0xff7a1a, Frost: 0xcdf3ff, Pulse: 0x7dffb0 };
+    mats.glow.emissive.setHex(glowColor[tank.gun.name] ?? 0x66d9ff);
+    // Ice shell: one block over the hull, one over the turret, invisible until chilled.
+    const iceMat = new THREE.MeshStandardMaterial({ color: 0xe6f6ff, map: this.frost, transparent: true, opacity: 0, roughness: 0.12, metalness: 0.05, emissive: 0x7fbfff, emissiveIntensity: 0.35, depthWrite: false });
+    const iceHull = new THREE.Mesh(new THREE.BoxGeometry(h.halfW * 2 + 0.16, h.halfH * 2 + 0.45, h.halfL * 2 + 0.16), iceMat);
+    iceHull.position.y = 0.02;
+    const iceTurret = new THREE.Mesh(new THREE.BoxGeometry(h.halfW * 1.35, 0.62, h.halfW * 1.7), iceMat);
+    iceTurret.position.y = 0.3;
+    group.add(iceHull);
+    turret.add(iceTurret);
+    iceHull.visible = iceTurret.visible = false;
     this.scene.add(group);
     const barCanvas = document.createElement('canvas');
     barCanvas.width = 256; barCanvas.height = 64;
@@ -186,7 +201,7 @@ export class View {
     this.tanks.push({
       tank, group, turret, barrel: built.barrel, muzzle: built.muzzle, left: hull.left, right: hull.right,
       offPos: new THREE.Vector3(), offQuat: new THREE.Quaternion(), shown: null, mats, charge: built.charge, color,
-      bar, barCanvas, barKey: '', name, recoil: 0, dust: 0, smoke: 0, marked: V(p), wasShielded: false,
+      bar, barCanvas, barKey: '', name, recoil: 0, dust: 0, smoke: 0, marked: V(p), wasShielded: false, ice: [iceHull, iceTurret], burn: 0,
     });
   }
 
@@ -309,8 +324,17 @@ export class View {
   private animateTank(tv: TankView, dt: number, alpha: number, follow: Tank | null) {
     const t = tv.tank, h = t.hull;
     const wreck = t.dead > 0;
-    tv.mats.paint.color.setHex(wreck ? 0x2b2b2b : 0xffffff);
-    tv.mats.trim.color.setHex(wreck ? 0x1c1c1c : tv.color).multiplyScalar(wreck ? 1 : 0.62);
+    const heat = wreck ? 0 : Math.max(0, t.temp), cold = wreck ? 0 : Math.max(0, -t.temp);
+    // Hot metal: the paint chars and the whole tank glows from dull red towards orange.
+    tv.mats.paint.color.setHex(wreck ? 0x2b2b2b : 0xffffff).lerp(CHAR, heat * 0.55).lerp(ICE, cold * 0.5);
+    tv.mats.trim.color.setHex(wreck ? 0x1c1c1c : tv.color).multiplyScalar(wreck ? 1 : 0.62).lerp(CHAR, heat * 0.5).lerp(ICE, cold * 0.5);
+    const flicker = 0.85 + Math.sin(this.clock * 23 + t.id) * 0.15;
+    for (const mat of [tv.mats.paint, tv.mats.trim, tv.mats.metal, tv.mats.dark]) {
+      if (heat > 0) { mat.emissive.setHex(0xff2a00).lerp(HOT, heat * heat); mat.emissiveIntensity = heat * 1.5 * flicker; }
+      else if (cold > 0) { mat.emissive.setHex(0x5fb4ff); mat.emissiveIntensity = cold * 0.35; }
+      else mat.emissiveIntensity = 0;
+    }
+    for (const m of tv.ice) { m.visible = cold > 0.02; (m.material as THREE.MeshStandardMaterial).opacity = Math.min(0.8, cold * 0.9); }
     tv.mats.glow.emissiveIntensity = wreck ? 0 : 1.4;
     for (const mat of [tv.mats.paint, tv.mats.trim]) { mat.transparent = t.shield > 0; mat.opacity = t.shield > 0 ? 0.55 + Math.sin(this.clock * 18) * 0.2 : 1; }
     if (tv.charge) {
@@ -337,6 +361,43 @@ export class View {
     if (!this.effects) return;
 
     const pos = tv.group.position;
+    // Stream guns: a rolling jet of fire or freezing fog from the nozzle.
+    if (t.streaming) {
+      const at = tv.muzzle.getWorldPosition(new THREE.Vector3());
+      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(tv.turret.getWorldQuaternion(new THREE.Quaternion()));
+      const reach = t.gun.range, life = 0.42;
+      const fire = t.gun.name === 'Ember';
+      const n = Math.max(1, Math.round(dt * 110));
+      for (let i = 0; i < n; i++) {
+        const vel = dir.clone().multiplyScalar((reach / life) * (0.75 + Math.random() * 0.35));
+        const spread = Math.tan(t.gun.cone * DEG) * (reach / life) * 1.3;
+        if (fire) this.fx.puff(at, { color: [0xfff0a0, 0xffb040, 0xff6a1a, 0xe0380c][Math.floor(Math.random() * 4)], size: [0.35, 2.3 + Math.random()], life: life * (0.8 + Math.random() * 0.4), alpha: 0.95, glow: true, vel, spread, rise: 3, drag: 1.1 });
+        else this.fx.puff(at, { color: Math.random() < 0.3 ? 0xffffff : 0xbfe9ff, size: [0.35, 2.6 + Math.random()], life: life * (0.9 + Math.random() * 0.5), alpha: 0.5, glow: Math.random() < 0.25, vel, spread, rise: -1.5, drag: 1.1 });
+      }
+      if (fire && Math.random() < dt * 14) this.fx.puff(at.clone().addScaledVector(dir, reach * 0.8), { color: 0x2b2826, size: [1.2, 3.4], life: 1.2, alpha: 0.45, spread: 2, rise: 3 });
+      if (Math.random() < dt * 20) this.fx.flash(at.clone().addScaledVector(dir, reach * 0.35), fire ? 0xff8a2a : 0xaee4ff, fire ? 26 : 10, 0.12);
+    }
+    // On fire: flames lick up off the hull, with black smoke above.
+    if (heat > 0.05) {
+      tv.burn -= dt;
+      if (tv.burn <= 0) {
+        tv.burn = 0.11 - heat * 0.07;
+        const at = pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * h.halfW * 2, h.halfH * 0.6 + Math.random() * 0.7, (Math.random() - 0.5) * h.halfL * 2).applyQuaternion(tv.group.quaternion));
+        this.fx.puff(at, { color: Math.random() < 0.5 ? 0xffb040 : 0xff5a14, size: [0.5 + heat * 0.5, 1.5 + heat], life: 0.4 + Math.random() * 0.25, alpha: 0.9, glow: true, spread: 0.8, rise: 5 });
+        if (Math.random() < 0.4) this.fx.puff(at.clone().setY(at.y + 0.6), { color: 0x1f1d1b, size: [0.7, 2.6], life: 1.3, alpha: 0.5 * heat + 0.15, spread: 0.8, rise: 2.6, drag: 0.8 });
+        if (Math.random() < 0.2) this.fx.flash(at, 0xff7a1a, 10 * heat, 0.15);
+      }
+    }
+    // Frozen: glints off the ice and cold vapour sinking to the ground.
+    if (cold > 0.05) {
+      tv.burn -= dt;
+      if (tv.burn <= 0) {
+        tv.burn = 0.14;
+        const at = pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * h.halfW * 2.2, Math.random() * 1.2, (Math.random() - 0.5) * h.halfL * 2.2).applyQuaternion(tv.group.quaternion));
+        this.fx.puff(at, { color: 0xffffff, size: [0.28 * cold + 0.08, 0.02], life: 0.35, alpha: 1, glow: true });
+        if (Math.random() < 0.5) this.fx.puff(at, { color: 0xd4efff, size: [0.6, 1.8], life: 1.1, alpha: 0.28 * cold + 0.08, spread: 0.6, rise: -1.2 });
+      }
+    }
     const speed = Math.abs(t.forwardSpeed) + Math.abs(t.sideSpeed);
     const back = new THREE.Vector3(0, 0, 1).applyQuaternion(tv.group.quaternion);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(tv.group.quaternion);
@@ -444,6 +505,16 @@ export class View {
       if (this.effects) this.fx.puff(m.position, { color: 0x58f09a, size: [0.6, 0.1], life: 0.16, alpha: 0.8, glow: true });
     });
 
+    // The nearest flame and the nearest frost jet set how loud each hiss is.
+    for (const kind of ['Ember', 'Frost'] as const) {
+      let level = 0;
+      for (const tv of this.tanks) {
+        if (!tv.tank.streaming || tv.tank.gun.name !== kind) continue;
+        const d = Math.hypot(tv.group.position.x - this.camPos.x, tv.group.position.z - this.camPos.z);
+        level = Math.max(level, 1 / (1 + (d / 22) ** 2));
+      }
+      this.sound.spray(kind, level);
+    }
     this.updateFlags();
     this.fx.update(dt);
 

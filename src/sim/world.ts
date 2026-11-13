@@ -2,7 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { MAPS, GameMap, Box } from './level';
 import { GUNS, GunParams, HullParams, SimParams, defaultSim } from './params';
 import { Tank, TankInput, TankState, ShotEvent, KillEvent, FlagEvent, Projectile, SimEvents, applyHit, noInput } from './tank';
-import { V3, add, scale, len, norm, qMul, qYaw, qPitch, DEG } from './vec';
+import { V3, add, scale, len, norm, rot as rotate, qMul, qYaw, qPitch, DEG } from './vec';
 
 export const STEP = 1 / 60;
 export const CRATE = { half: 0.6, mass: 250 };
@@ -116,11 +116,38 @@ export class SimWorld {
       if (inputs) t.input = inputs[i] ?? noInput();
       t.step(STEP, t.input, this.params, ev);
     });
+    this.spray(ev);
     this.flyShells(ev);
     this.shells.push(...ev.spawn);
     this.world.step();
     this.updateFlags(ev);
     this.time += STEP;
+  }
+
+  // Every tank caught in a stream's cone, in range and not behind cover, is damaged and heated or chilled.
+  private spray(ev: SimEvents) {
+    for (const t of this.tanks) {
+      if (!t.streaming) continue;
+      const g = t.gun;
+      const q = t.turretRotation();
+      const dir = rotate(q, { x: 0, y: 0, z: -1 });
+      const from = add(t.body.translation(), scale(rotate(t.body.rotation(), { x: 0, y: 1, z: 0 }), t.hull.halfH + 0.3));
+      for (const o of this.tanks) {
+        if (o === t || o.dead > 0 || o.shield > 0) continue;
+        if (t.team !== 0 && o.team === t.team) continue;
+        const to = { x: o.body.translation().x - from.x, y: o.body.translation().y - from.y, z: o.body.translation().z - from.z };
+        const dist = len(to);
+        if (dist > g.range + o.hull.halfL) continue;
+        const n = norm(to);
+        if (Math.acos(Math.min(1, n.x * dir.x + n.y * dir.y + n.z * dir.z)) > (g.cone + 6) * DEG) continue;
+        const hit = this.world.castRay(new RAPIER.Ray(from, n), dist, true, undefined, undefined, undefined, t.body);
+        if (hit && hit.collider.parent() !== o.body) continue;
+        o.hurt(g.damage * STEP, t.id, this.params, ev);
+        // Heat and cold cancel: flame thaws a frozen tank before it starts to burn it.
+        o.temp = Math.max(-1, Math.min(1, o.temp + g.temp * STEP));
+        if (g.temp > 0) o.burnBy = t.id;
+      }
+    }
   }
 
   private flyShells(ev: SimEvents) {

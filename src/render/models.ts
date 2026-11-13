@@ -149,7 +149,35 @@ export function buildTurret(gun: string, size: number, reach: number, m: TankMat
   const ring = new THREE.Mesh(new THREE.CylinderGeometry(s * 0.6, s * 0.66, 0.08, 16), m.dark);
   ring.position.y = 0.04;
   g.add(ring);
-  if (gun === 'Lance') {
+  if (gun === 'Ember') {
+    // Squat housing between two fuel bottles, feeding a flared nozzle with a pilot light.
+    g.add(slab([[-s * 0.45, -s * 0.5], [-s * 0.5, s * 0.5], [s * 0.5, s * 0.5], [s * 0.45, -s * 0.5]], 0.08, 0.4, m.paint));
+    for (const sx of [-1, 1]) {
+      const bottle = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, s * 1.1, 12), m.metal);
+      bottle.rotation.x = Math.PI / 2;
+      bottle.position.set(sx * s * 0.62, 0.3, s * 0.1);
+      g.add(bottle);
+      g.add(box(0.37, 0.37, 0.09, m.trim, sx * s * 0.62, 0.3, -s * 0.2), box(0.37, 0.37, 0.09, m.trim, sx * s * 0.62, 0.3, s * 0.4));
+    }
+    const len = Math.max(0.5, reach - s * 0.5);
+    barrel.add(tube(0.09, len * 0.7, m.dark, 0, 0.28, -(s * 0.5 + len * 0.7)));
+    barrel.add(tube(0.1, len * 0.3, m.metal, 0, 0.28, -reach, 0.24)); // flared mouth
+    barrel.add(box(0.07, 0.07, 0.07, m.glow, 0, 0.12, -reach + 0.05)); // pilot light
+    muzzle.position.set(0, 0.28, -reach);
+  } else if (gun === 'Frost') {
+    // Lagged cryo tank across the back, a ribbed feed pipe, and a wide frosted horn.
+    g.add(slab([[-s * 0.4, -s * 0.55], [-s * 0.5, s * 0.3], [s * 0.5, s * 0.3], [s * 0.4, -s * 0.55]], 0.08, 0.36, m.paint));
+    const tankMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.26, s * 0.75, 4, 12), m.metal);
+    tankMesh.rotation.z = Math.PI / 2;
+    tankMesh.position.set(0, 0.42, s * 0.55);
+    g.add(tankMesh);
+    for (const sx of [-1, 0, 1]) g.add(box(0.07, 0.56, 0.56, m.trim, sx * s * 0.3, 0.42, s * 0.55));
+    const len = Math.max(0.5, reach - s * 0.5);
+    barrel.add(tube(0.1, len * 0.75, m.metal, 0, 0.28, -(s * 0.5 + len * 0.75)));
+    for (let i = 0; i < 5; i++) barrel.add(tube(0.14, 0.05, m.glow, 0, 0.28, -(s * 0.6 + (i / 5) * len * 0.7)));
+    barrel.add(tube(0.11, len * 0.25, m.paint, 0, 0.28, -reach, 0.3)); // horn
+    muzzle.position.set(0, 0.28, -reach);
+  } else if (gun === 'Lance') {
     // Narrow body, two long rails with coil rings, counterweight at the back.
     g.add(slab([[-s * 0.32, -s * 0.75], [-s * 0.42, s * 0.2], [-s * 0.22, s * 0.8], [s * 0.22, s * 0.8], [s * 0.42, s * 0.2], [s * 0.32, -s * 0.75]], 0.08, 0.42, m.paint));
     g.add(box(s * 0.8, 0.3, s * 0.4, m.trim, 0, 0.3, s * 0.85));

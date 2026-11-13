@@ -8,7 +8,7 @@ import { View } from './render/view';
 import { NetClient } from './net/client';
 import { NET_PORT } from './net/protocol';
 
-const STORE = 'tank-sandbox-v12';
+const STORE = 'tank-sandbox-v13';
 const query = new URLSearchParams(location.search);
 const online = query.has('online');
 const COLORS = { me: 0x2f9e8f, player: 0x3a78c9, bot: 0x8f7a5c };
@@ -106,9 +106,9 @@ if (!online && query.has('showcase')) {
   for (const t of targets) { view.removeTank(t); sim.removeTank(t); }
   targets = [];
   Object.keys(hulls).forEach((hn, i) => Object.keys(guns).forEach((gn, j) => {
-    const t = sim.addTank(hulls[hn], { x: (i - 1) * 7.5 - 22, y: 1.2, z: 70 - j * 9 }, 150, undefined, guns[gn]);
+    const t = sim.addTank(hulls[hn], { x: (i - 1) * 7.5 - 22, y: 1.2, z: 70 - j * 8 }, 150, undefined, guns[gn]);
     t.bot = true;
-    t.team = j === 1 ? 2 : j === 2 ? 0 : 1;
+    t.team = j % 3 === 1 ? 2 : j % 3 === 2 ? 0 : 1;
     view.addTank(t, colorOf(t, false), `${hn} + ${gn}`);
     targets.push(t);
   }));
@@ -221,7 +221,7 @@ function drawHud() {
   const p = player.body.translation();
   hud.textContent =
     netLine +
-    `${player.hull.name} + ${player.gun.name}   ${player.dead > 0 ? `DESTROYED – back in ${player.dead.toFixed(1)} s` : `HP ${Math.ceil(player.hp)} / ${player.hull.hp}`}${player.shield > 0 ? '   shielded' : ''}${player.boostLeft > 0 && !fullHud ? `   BOOST ${player.boostLeft.toFixed(0)} s` : ''}\n` +
+    `${player.hull.name} + ${player.gun.name}   ${player.dead > 0 ? `DESTROYED – back in ${player.dead.toFixed(1)} s` : `HP ${Math.ceil(player.hp)} / ${player.hull.hp}`}${player.shield > 0 ? '   shielded' : ''}${player.temp > 0.03 ? `   ON FIRE ${(player.temp * 100).toFixed(0)}%` : player.temp < -0.03 ? `   FROZEN ${(-player.temp * 100).toFixed(0)}%` : ''}${player.gun.kind === 'stream' ? `\n${player.gun.name === 'Ember' ? 'fuel ' : 'coolant '}${'█'.repeat(Math.round(player.energy * 12)).padEnd(12, '░')} ${(player.energy * 100).toFixed(0)}%` : ''}${player.boostLeft > 0 && !fullHud ? `   BOOST ${player.boostLeft.toFixed(0)} s` : ''}\n` +
     (!fullHud ? '' :
     `speed    ${f(player.forwardSpeed, 2)} m/s   (top ${player.hull.topSpeed})${player.boostLeft > 0 ? `   BOOST ${player.boostLeft.toFixed(0)} s` : ''}\n` +
     `side     ${f(player.sideSpeed, 2)} m/s\n` +
@@ -287,15 +287,28 @@ function buildGunFolder() {
   const g = guns[state.gun];
   const fo = gui.addFolder(`Gun: ${g.name}`);
   gunFolder = fo;
-  fo.add(g, 'damage', 0, 400, 1).name('Damage per hit');
-  fo.add(g, 'reload', 0.05, 10, 0.01).name('Reload s');
-  fo.add(g, 'delay', 0, 3, 0.05).name('Charge before shot s');
-  fo.add(g, 'impact', 0, 40000, 100).name('Impact on target N·s');
-  fo.add(g, 'recoil', 0, 40000, 50).name('Recoil on shooter N·s');
+  if (g.kind === 'stream') {
+    fo.add(g, 'damage', 0, 200, 1).name('Damage per second');
+    fo.add(g, 'range', 5, 60, 1).name('Reach m');
+    fo.add(g, 'cone', 2, 40, 1).name('Spray half-angle °');
+    fo.add(g, 'tank', 1, 20, 0.5).name('Full tank lasts s');
+    fo.add(g, 'refill', 1, 30, 0.5).name('Refill takes s');
+    fo.add(g, 'temp', -2, 2, 0.05).name(g.temp > 0 ? 'Heats target per s' : 'Chills target per s');
+  } else {
+    fo.add(g, 'damage', 0, 400, 1).name('Damage per hit');
+    fo.add(g, 'reload', 0.05, 10, 0.01).name('Reload s');
+    fo.add(g, 'delay', 0, 3, 0.05).name('Charge before shot s');
+    fo.add(g, 'impact', 0, 40000, 100).name('Impact on target N·s');
+    fo.add(g, 'recoil', 0, 40000, 50).name('Recoil on shooter N·s');
+    fo.add(g, 'range', 10, 500, 5).name('Range m');
+    if (g.kind === 'projectile') fo.add(g, 'projSpeed', 10, 300, 5).name('Bolt speed m/s');
+    if (g.kind === 'hitscan') {
+      fo.add(g, 'pierce', 0, 8, 1).name('Goes through extra tanks');
+      fo.add(g, 'pierceKeep', 0.1, 1, 0.05).name('Power kept per tank');
+    }
+  }
   fo.add(g, 'turretSpeed', 20, 250, 1).name('Turret speed °/s');
   fo.add(g, 'turretAccel', 50, 1500, 10).name('Turret accel');
-  fo.add(g, 'range', 10, 500, 5).name('Range m');
-  if (g.kind === 'projectile') fo.add(g, 'projSpeed', 10, 300, 5).name('Bolt speed m/s');
   fo.onChange(save);
   if (online) fo.close();
 }
@@ -307,6 +320,10 @@ gun.add(P, 'autoAimUp', 0, 25, 1).name('Auto-aim up °');
 gun.add(P, 'autoAimDown', 0, 25, 1).name('Auto-aim down °');
 gun.add(P, 'respawnTime', 0.5, 15, 0.5).name('Respawn after s');
 gun.add(P, 'spawnShield', 0, 10, 0.5).name('Spawn protection s');
+gun.add(P, 'burnDps', 0, 80, 1).name('Burn damage per s when hot');
+gun.add(P, 'heatFade', 0.02, 1, 0.01).name('Heat fades per s');
+gun.add(P, 'coldFade', 0.02, 1, 0.01).name('Cold fades per s');
+gun.add(P, 'freezeSlow', 0, 0.95, 0.05).name('Speed lost when frozen');
 gun.add(P, 'flagReturn', 3, 60, 1).name('Dropped flag returns after s');
 const boost = gui.addFolder('Speed boost (key 4)');
 boost.add(P, 'boostSpeed', 1, 2.5, 0.05).name('Top speed ×');
