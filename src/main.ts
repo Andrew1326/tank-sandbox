@@ -2,10 +2,15 @@ import GUI from 'lil-gui';
 import { SimWorld, STEP } from './sim/world';
 import { HULLS, HullParams, defaultSim } from './sim/params';
 import { Tank, TankInput, noInput } from './sim/tank';
+import { SPAWN, addCrates, addTargets } from './sim/setup';
 import { View } from './render/view';
+import { NetClient } from './net/client';
+import { NET_PORT } from './net/protocol';
 
-const SPAWN = { x: 0, y: 1.2, z: 6 };
 const STORE = 'tank-sandbox-v8';
+const query = new URLSearchParams(location.search);
+const online = query.has('online');
+const COLORS = { me: 0x2f9e8f, player: 0x3a78c9, bot: 0xb5653a };
 
 const sim = await SimWorld.create();
 const view = new View(document.getElementById('c') as HTMLCanvasElement, sim);
@@ -13,46 +18,69 @@ const hud = document.getElementById('hud')!;
 
 // Working copies so the sliders never touch the presets.
 const hulls: Record<string, HullParams> = Object.fromEntries(Object.entries(HULLS).map(([k, v]) => [k, { ...v }]));
-const state = { hull: 'Dart' };
-try {
-  const saved = JSON.parse(localStorage.getItem(STORE) ?? 'null');
-  if (saved) {
-    Object.assign(sim.params, saved.sim);
-    for (const k of Object.keys(hulls)) Object.assign(hulls[k], saved.hulls?.[k]);
-    if (hulls[saved.hull]) state.hull = saved.hull;
-  }
-} catch { /* start from defaults */ }
+const state = { hull: 'Dart', lag: 0 };
+if (!online) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE) ?? 'null');
+    if (saved) {
+      Object.assign(sim.params, saved.sim);
+      for (const k of Object.keys(hulls)) Object.assign(hulls[k], saved.hulls?.[k]);
+      if (hulls[saved.hull]) state.hull = saved.hull;
+    }
+  } catch { /* start from defaults */ }
+}
+let tuneTimer = 0;
 const save = () => {
+  if (online) {
+    // The server owns the numbers; push our edits to it.
+    clearTimeout(tuneTimer);
+    tuneTimer = window.setTimeout(() => net?.tune(), 120);
+    return;
+  }
   try { localStorage.setItem(STORE, JSON.stringify({ sim: sim.params, hulls, hull: state.hull })); } catch { /* ignore */ }
 };
 
-let player: Tank = sim.addTank(hulls[state.hull], SPAWN, 0);
-view.addTank(player, 0x2f9e8f);
+let player: Tank | null = null;
+let net: NetClient | null = null;
+let targets: Tank[] = [];
 
-const dummies: Tank[] = [];
-function spawnDummies() {
-  for (const d of dummies) { view.removeTank(d); sim.removeTank(d); }
-  dummies.length = 0;
-  const spots: [string, number, number, number][] = [
-    ['Dart', -9.5, -15, 90], ['Ranger', -9.5, -25, 90], ['Anvil', -9.5, -35, 90],
-  ];
-  for (const [name, x, z, yaw] of spots) {
-    const d = sim.addTank(hulls[name], { x, y: 1.2, z }, yaw);
-    view.addTank(d, 0xb5653a);
-    dummies.push(d);
-  }
+if (online) {
+  net = new NetClient(`ws://${location.hostname}:${NET_PORT}`, sim, hulls, {
+    onAdd: (t) => {
+      const mine = t.id === net!.id;
+      view.addTank(t, mine ? COLORS.me : t.bot ? COLORS.bot : COLORS.player);
+      if (mine) { player = t; state.hull = t.hull.name; buildHullFolder(); resetMeters(); gui.controllersRecursive().forEach((c) => c.updateDisplay()); }
+    },
+    onRemove: (t) => { view.removeTank(t); if (t === player) player = null; },
+    onCrate: (c) => view.addCrate(c),
+    onShots: (s) => view.showShots(s),
+    onTune: () => gui.controllersRecursive().forEach((c) => c.updateDisplay()),
+    before: () => view.beginCorrection(),
+    after: () => view.endCorrection(),
+  }, state.hull);
+} else {
+  player = sim.addTank(hulls[state.hull], SPAWN, 0);
+  view.addTank(player, COLORS.me);
+  targets = addTargets(sim, hulls);
+  targets.forEach((t) => view.addTank(t, COLORS.bot));
+  addCrates(sim).forEach((c) => view.addCrate(c));
 }
-spawnDummies();
-for (let i = 0; i < 6; i++) view.addCrate(sim.addCrate({ x: -14 + (i % 3) * 1.3, y: 0.6 + Math.floor(i / 3) * 1.2, z: -2 }, 0.6, 250));
+
+function resetTargets() {
+  if (net) { net.command('targets'); return; }
+  for (const d of targets) { view.removeTank(d); sim.removeTank(d); }
+  targets = addTargets(sim, hulls);
+  targets.forEach((t) => view.addTank(t, COLORS.bot));
+}
 
 function swapHull(name: string) {
+  if (net) { net.setHull(name); return; }
+  if (!player) return;
   const p = player.body.translation();
   view.removeTank(player);
   sim.removeTank(player);
-  // The player must stay first so input index 0 drives it.
   player = sim.addTank(hulls[name], { x: p.x, y: p.y + 0.6, z: p.z }, 0);
-  sim.tanks.unshift(sim.tanks.pop()!);
-  view.addTank(player, 0x2f9e8f);
+  view.addTank(player, COLORS.me);
   buildHullFolder();
   resetMeters();
   save();
@@ -64,8 +92,8 @@ addEventListener('keydown', (e) => {
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
   if (e.repeat) return;
   keys.add(e.code);
-  if (e.code === 'KeyR') player.upright();
-  if (e.code === 'KeyT') { player.place(SPAWN, 0); resetMeters(); }
+  if (e.code === 'KeyR') { if (net) net.command('upright'); else player?.upright(); }
+  if (e.code === 'KeyT') { if (net) net.command('respawn'); else player?.place(SPAWN, 0); resetMeters(); }
   if (e.code === 'KeyV') view.showRays = !view.showRays;
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
@@ -84,26 +112,28 @@ function readInput(): TankInput {
 
 // --- meters ---
 const meter = { accelT: NaN, stopT: NaN, stopD: NaN, airT: NaN, peakYaw: 0, peakSpeed: 0 };
-let accelStart = -1, stopStart = -1, stopFrom = 0, airStart = -1, lastThrottle = 0, odo = 0;
+let accelStart = -1, stopStart = -1, stopFrom = 0, airStart = -1, lastThrottle = 0, odo = 0, clock = 0;
 function resetMeters() {
   Object.assign(meter, { accelT: NaN, stopT: NaN, stopD: NaN, airT: NaN, peakYaw: 0, peakSpeed: 0 });
   accelStart = stopStart = airStart = -1;
 }
 function updateMeters(input: TankInput) {
+  clock += STEP;
+  if (!player) return;
   const v = Math.abs(player.forwardSpeed);
   const top = player.hull.topSpeed;
   odo += v * STEP;
-  if (input.throttle !== 0 && lastThrottle === 0 && v < 0.3) accelStart = sim.time;
-  if (accelStart >= 0 && v >= 0.95 * top) { meter.accelT = sim.time - accelStart; accelStart = -1; }
+  if (input.throttle !== 0 && lastThrottle === 0 && v < 0.3) accelStart = clock;
+  if (accelStart >= 0 && v >= 0.95 * top) { meter.accelT = clock - accelStart; accelStart = -1; }
   if (input.throttle === 0 && lastThrottle !== 0) {
     accelStart = -1;
-    if (v > 0.9 * top) { stopStart = sim.time; stopFrom = odo; }
+    if (v > 0.9 * top) { stopStart = clock; stopFrom = odo; }
   }
   if (stopStart >= 0 && input.throttle !== 0) stopStart = -1;
-  if (stopStart >= 0 && v < 0.15) { meter.stopT = sim.time - stopStart; meter.stopD = odo - stopFrom; stopStart = -1; }
-  if (player.grounded === 0 && airStart < 0) airStart = sim.time;
+  if (stopStart >= 0 && v < 0.15) { meter.stopT = clock - stopStart; meter.stopD = odo - stopFrom; stopStart = -1; }
+  if (player.grounded === 0 && airStart < 0) airStart = clock;
   if (player.grounded > 0 && airStart >= 0) {
-    const t = sim.time - airStart;
+    const t = clock - airStart;
     if (t > 0.15) meter.airT = t;
     airStart = -1;
   }
@@ -113,11 +143,20 @@ function updateMeters(input: TankInput) {
 }
 const f = (x: number, d = 2, unit = '') => (Number.isFinite(x) ? x.toFixed(d) + unit : '–');
 function drawHud() {
+  let netLine = '';
+  if (net) {
+    netLine = net.connected
+      ? `ONLINE  ${net.players} player${net.players === 1 ? '' : 's'} · ping ${f(net.ping, 0)} ms\n` +
+        `replay ${net.replaySteps} ticks · fix ${f(net.correction * 100, 1)} cm (worst ${f(net.worstCorrection * 100, 0)})\n`
+      : `OFFLINE – no server on port ${NET_PORT} (npm run server)\n`;
+  }
+  if (!player) { hud.textContent = netLine + 'waiting for a tank…'; return; }
   const q = player.body.rotation();
   const pitch = Math.asin(Math.max(-1, Math.min(1, 2 * (q.w * q.x - q.y * q.z)))) * 57.2958;
   const roll = Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.x * q.x + q.z * q.z)) * 57.2958;
   const p = player.body.translation();
   hud.textContent =
+    netLine +
     `${player.hull.name}   mass ${player.hull.mass} kg\n` +
     `speed    ${f(player.forwardSpeed, 2)} m/s   (top ${player.hull.topSpeed})${player.boostLeft > 0 ? `   BOOST ${player.boostLeft.toFixed(0)} s` : ''}\n` +
     `side     ${f(player.sideSpeed, 2)} m/s\n` +
@@ -133,12 +172,16 @@ function drawHud() {
 }
 
 // --- tuning panel ---
-const gui = new GUI({ title: 'Tuning', width: 300 });
-gui.add(state, 'hull', Object.keys(hulls)).name('Hull').onChange(swapHull);
+const gui = new GUI({ title: online ? 'Tuning (shared with server)' : 'Tuning', width: 300 });
+gui.add(state, 'hull', Object.keys(hulls)).name('Hull').onChange(swapHull).listen();
+if (online) {
+  gui.add(state, 'lag', 0, 300, 5).name('Fake lag, ms each way').onChange((v: number) => { if (net) net.lagMs = v; });
+}
 let hullFolder: GUI | null = null;
 function buildHullFolder() {
   hullFolder?.destroy();
   const h = hulls[state.hull];
+  const remass = () => sim.tanks.forEach((t) => t.applyMass());
   const fo = gui.addFolder('Hull handling');
   hullFolder = fo;
   fo.add(h, 'topSpeed', 2, 20, 0.1).name('Top speed m/s');
@@ -149,10 +192,11 @@ function buildHullFolder() {
   fo.add(h, 'turnSpeed', 20, 220, 1).name('Turn speed °/s');
   fo.add(h, 'turnAccel', 20, 600, 1).name('Turn accel');
   fo.add(h, 'antiTurnAccel', 20, 900, 1).name('Turn stop accel');
-  fo.add(h, 'mass', 500, 8000, 50).name('Mass kg').onChange(() => player.applyMass());
-  fo.add(h, 'comY', -0.5, 0.5, 0.01).name('Centre of mass height').onChange(() => player.applyMass());
-  fo.add(h, 'stability', 0.5, 8, 0.1).name('Tip resistance ×').onChange(() => player.applyMass());
+  fo.add(h, 'mass', 500, 8000, 50).name('Mass kg').onChange(remass);
+  fo.add(h, 'comY', -0.5, 0.5, 0.01).name('Centre of mass height').onChange(remass);
+  fo.add(h, 'stability', 0.5, 8, 0.1).name('Tip resistance ×').onChange(remass);
   fo.onChange(save);
+  if (online) fo.close();
 }
 buildHullFolder();
 const P = sim.params;
@@ -192,15 +236,16 @@ cam.add(view, 'camDist', 4, 25, 0.5).name('Distance');
 cam.add(view, 'camHeight', 1, 20, 0.5).name('Height');
 cam.add(view, 'showRays').name('Show suspension').listen();
 cam.close();
+if (online) { susp.close(); gun.close(); boost.close(); hit.close(); }
 gui.onChange(save);
 if (innerWidth < 700) gui.close();
-gui.add({ go: () => { spawnDummies(); } }, 'go').name('Reset target tanks');
+gui.add({ go: resetTargets }, 'go').name('Reset target tanks');
 gui.add({ go: () => { navigator.clipboard?.writeText(JSON.stringify({ sim: sim.params, hulls }, null, 2)); } }, 'go').name('Copy settings as JSON');
 gui.add({
   go: () => {
     Object.assign(sim.params, defaultSim());
     for (const k of Object.keys(hulls)) Object.assign(hulls[k], HULLS[k]);
-    player.applyMass();
+    sim.tanks.forEach((t) => t.applyMass());
     gui.controllersRecursive().forEach((c) => c.updateDisplay());
     save();
   },
@@ -213,10 +258,24 @@ function frame(now: number) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   acc += dt;
+  net?.sync();
   let steps = 0;
   while (acc >= STEP && steps < 5) {
     const input = readInput();
-    sim.step([input]);
+    if (net) {
+      if (net.id) {
+        net.sendInput(input);
+        if (player) player.input = input;
+        sim.step();
+        // Other players' shots arrive from the server; only ours are shown from the prediction.
+        const mine = sim.shots.filter((s) => s.by === net!.id);
+        sim.shots.length = 0;
+        view.showShots(mine);
+      }
+    } else {
+      if (player) player.input = input;
+      sim.step();
+    }
     updateMeters(input);
     acc -= STEP;
     steps++;
@@ -230,4 +289,4 @@ function frame(now: number) {
 requestAnimationFrame(frame);
 
 // Handy for poking at the sim from the console.
-Object.assign(window as object, { sim, view, getPlayer: () => player, noInput });
+Object.assign(window as object, { sim, view, net, getPlayer: () => player, noInput });

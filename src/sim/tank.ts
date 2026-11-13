@@ -14,9 +14,17 @@ export interface TankInput {
 export const noInput = (): TankInput => ({ throttle: 0, steer: 0, turret: 0, center: false, fire: false });
 
 export interface ShotEvent {
+  by: number;
   from: V3;
   to: V3;
   hit: boolean;
+}
+
+// Everything needed to put a tank back exactly where the server says it is.
+export interface TankState {
+  p: V3; q: Q; lv: V3; av: V3;
+  ty: number; tv: number; cd: number; pe: number; bo: number;
+  lx: number; lz: number; pu: boolean;
 }
 
 export interface RayState {
@@ -35,6 +43,9 @@ function pointVel(body: RAPIER.RigidBody, p: V3): V3 {
 export class Tank {
   body: RAPIER.RigidBody;
   hull: HullParams;
+  id = 0;
+  bot = false;
+  input: TankInput = noInput();
   turretYaw = 0;
   turretVel = 0;
   rays: RayState[] = [];
@@ -107,6 +118,26 @@ export class Tank {
     this.body.setAngvel(v3(), true);
     this.lastVx = this.lastVz = 0;
     this.snapshot();
+  }
+
+  getState(): TankState {
+    const b = this.body;
+    return {
+      p: { ...b.translation() }, q: { ...b.rotation() }, lv: { ...b.linvel() }, av: { ...b.angvel() },
+      ty: this.turretYaw, tv: this.turretVel, cd: this.cooldown, pe: this.pending, bo: this.boostLeft,
+      lx: this.lastVx, lz: this.lastVz, pu: this.pushed,
+    };
+  }
+
+  setState(s: TankState) {
+    const b = this.body;
+    b.setTranslation(s.p, true);
+    b.setRotation(s.q, true);
+    b.setLinvel(s.lv, true);
+    b.setAngvel(s.av, true);
+    this.turretYaw = s.ty; this.turretVel = s.tv; this.cooldown = s.cd; this.pending = s.pe; this.boostLeft = s.bo;
+    this.lastVx = s.lx; this.lastVz = s.lz; this.pushed = s.pu;
+    this.shotHit = false;
   }
 
   private touchingTank(): boolean {
@@ -332,6 +363,6 @@ export class Tank {
       }
     }
     b.applyImpulseAtPoint(scale(dir, -P.recoil), muzzle, true);
-    shots.push({ from: muzzle, to: end, hit: struck });
+    shots.push({ by: this.id, from: muzzle, to: end, hit: struck });
   }
 }

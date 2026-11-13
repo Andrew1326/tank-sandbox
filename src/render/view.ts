@@ -46,10 +46,15 @@ function labelSprite(text: string): THREE.Sprite {
   return sp;
 }
 
+const IDENTITY = new THREE.Quaternion();
+
 interface TankView {
   tank: Tank;
   group: THREE.Group;
   turret: THREE.Group;
+  offPos: THREE.Vector3; // leftover from the last network correction, fades out
+  offQuat: THREE.Quaternion;
+  shown: { pos: THREE.Vector3; quat: THREE.Quaternion } | null;
 }
 
 export class View {
@@ -152,7 +157,7 @@ export class View {
     group.add(turret);
     group.traverse((o) => { o.castShadow = true; });
     this.scene.add(group);
-    this.tanks.push({ tank, group, turret });
+    this.tanks.push({ tank, group, turret, offPos: new THREE.Vector3(), offQuat: new THREE.Quaternion(), shown: null });
   }
 
   removeTank(tank: Tank) {
@@ -172,8 +177,27 @@ export class View {
     this.crates.push({ crate, mesh });
   }
 
-  drainShots() {
-    for (const s of this.sim.shots) {
+  // Network corrections: remember where every tank is drawn, then turn the jump
+  // into an offset that fades, so a correction never shows as a snap.
+  beginCorrection() {
+    for (const tv of this.tanks) tv.shown = { pos: tv.group.position.clone(), quat: tv.group.quaternion.clone() };
+  }
+
+  endCorrection() {
+    for (const tv of this.tanks) {
+      if (!tv.shown) continue;
+      const p = tv.tank.body.translation(), r = tv.tank.body.rotation();
+      tv.offPos.set(tv.shown.pos.x - p.x, tv.shown.pos.y - p.y, tv.shown.pos.z - p.z);
+      tv.offQuat.copy(tv.shown.quat).multiply(new THREE.Quaternion(r.x, r.y, r.z, r.w).invert());
+      if (tv.offPos.length() > 4) { tv.offPos.set(0, 0, 0); tv.offQuat.identity(); }
+      // The replay ends on the present, so draw from it without re-interpolating the last replay step.
+      tv.tank.snapshot();
+      tv.shown = null;
+    }
+  }
+
+  showShots(shots: { from: { x: number; y: number; z: number }; to: { x: number; y: number; z: number }; hit: boolean }[]) {
+    for (const s of shots) {
       const geo = new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(s.from.x, s.from.y, s.from.z),
         new THREE.Vector3(s.to.x, s.to.y, s.to.z),
@@ -182,10 +206,14 @@ export class View {
       this.scene.add(line);
       this.tracers.push({ line, life: 0.35 });
     }
+  }
+
+  drainShots() {
+    this.showShots(this.sim.shots);
     this.sim.shots.length = 0;
   }
 
-  render(alpha: number, dt: number, follow: Tank) {
+  render(alpha: number, dt: number, follow: Tank | null) {
     const a = new THREE.Quaternion(), b = new THREE.Quaternion();
     for (const tv of this.tanks) {
       const t = tv.tank;
@@ -198,6 +226,11 @@ export class View {
       a.set(t.prevRot.x, t.prevRot.y, t.prevRot.z, t.prevRot.w);
       b.set(r.x, r.y, r.z, r.w);
       tv.group.quaternion.copy(a.slerp(b, alpha));
+      const fade = Math.exp(-dt * 10);
+      tv.offPos.multiplyScalar(fade);
+      tv.offQuat.slerp(IDENTITY, 1 - fade);
+      tv.group.position.add(tv.offPos);
+      tv.group.quaternion.premultiply(tv.offQuat);
       tv.turret.rotation.y = t.prevTurret + (t.turretYaw - t.prevTurret) * alpha;
     }
     for (const cv of this.crates) {
