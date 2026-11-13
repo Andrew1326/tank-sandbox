@@ -1,5 +1,5 @@
-import type { HullParams } from '../sim/params';
-import type { KillEvent, ShotEvent, Tank, TankInput } from '../sim/tank';
+import type { GunParams, HullParams } from '../sim/params';
+import type { FlagEvent, KillEvent, ShotEvent, Tank, TankInput } from '../sim/tank';
 import type { Crate, SimWorld } from '../sim/world';
 import type { ClientMsg, ScoreRow, ServerMsg } from './protocol';
 
@@ -11,6 +11,7 @@ export interface NetHooks {
   onCrate?: (c: Crate) => void;
   onShots?: (s: ShotEvent[]) => void;
   onKills?: (k: KillEvent[]) => void;
+  onFlags?: (f: FlagEvent[]) => void;
   onTune?: () => void;
   onMap?: () => void;
   before?: () => void; // just before the world is rewound to a snapshot
@@ -32,6 +33,7 @@ export class NetClient {
   serverShots = 0; // our own shots as the server resolved them
   serverHits = 0;
   private kills: KillEvent[] = [];
+  private flagEvents: FlagEvent[] = [];
   private ws: WebSocket;
   private seq = 0;
   private pending: { seq: number; input: TankInput }[] = [];
@@ -43,11 +45,14 @@ export class NetClient {
     private sim: SimWorld,
     private hulls: Record<string, HullParams>,
     private hooks: NetHooks,
+    private guns: Record<string, GunParams>,
     hull: string,
+    gun: string,
     name: string,
   ) {
+    sim.guns = guns;
     this.ws = new WebSocket(url);
-    this.ws.onopen = () => { this.connected = true; this.send({ t: 'hello', hull, name }); };
+    this.ws.onopen = () => { this.connected = true; this.send({ t: 'hello', hull, gun, name }); };
     this.ws.onclose = () => { this.connected = false; };
     this.ws.onmessage = (e) => this.delayed(() => this.receive(JSON.parse(e.data as string)));
     setInterval(() => this.send({ t: 'ping', c: performance.now() }), 1000);
@@ -77,12 +82,14 @@ export class NetClient {
     } else if (m.t === 'snap') {
       this.shots.push(...m.shots);
       this.kills.push(...m.kills);
+      this.flagEvents.push(...m.flagEvents);
       if (!this.latest || m.tick > this.latest.tick) this.latest = m;
     }
   }
 
-  private applyTune(m: { sim: object; hulls: Record<string, object> }) {
+  private applyTune(m: { sim: object; hulls: Record<string, object>; guns: Record<string, object> }) {
     Object.assign(this.sim.params, m.sim);
+    for (const k of Object.keys(this.guns)) Object.assign(this.guns[k], m.guns[k]);
     for (const k of Object.keys(this.hulls)) Object.assign(this.hulls[k], m.hulls[k]);
     for (const t of this.sim.tanks) t.applyMass();
     this.hooks.onTune?.();
@@ -107,6 +114,8 @@ export class NetClient {
     if (others.length) this.hooks.onShots?.(others);
     if (this.kills.length) this.hooks.onKills?.(this.kills);
     this.kills = [];
+    if (this.flagEvents.length) this.hooks.onFlags?.(this.flagEvents);
+    this.flagEvents = [];
     this.score = snap.score;
 
     this.hooks.before?.();
@@ -129,6 +138,6 @@ export class NetClient {
   }
 
   command(c: 'upright' | 'respawn' | 'targets') { this.send({ t: 'cmd', c }); }
-  setHull(hull: string) { this.send({ t: 'hull', hull }); }
-  tune() { this.send({ t: 'tune', sim: this.sim.params, hulls: this.hulls }); }
+  setLoadout(hull: string, gun: string) { this.send({ t: 'loadout', hull, gun }); }
+  tune() { this.send({ t: 'tune', sim: this.sim.params, hulls: this.hulls, guns: this.guns }); }
 }

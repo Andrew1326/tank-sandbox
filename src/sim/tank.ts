@@ -1,5 +1,5 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
-import type { HullParams, SimParams } from './params';
+import type { GunParams, HullParams, SimParams } from './params';
 import { V3, Q, v3, add, sub, scale, dot, cross, norm, rot, clamp, qMul, qYaw, DEG } from './vec';
 
 export interface TankInput {
@@ -15,6 +15,7 @@ export const noInput = (): TankInput => ({ throttle: 0, steer: 0, turret: 0, cen
 
 export interface ShotEvent {
   by: number;
+  gun: string;
   from: V3;
   to: V3;
   hit: boolean;
@@ -34,9 +35,54 @@ export interface KillEvent {
   at: V3;
 }
 
+export interface Projectile {
+  by: number;
+  team: number;
+  gun: string;
+  p: V3;
+  v: V3;
+  life: number;
+}
+
+export interface FlagEvent {
+  what: 'taken' | 'dropped' | 'returned' | 'captured';
+  team: number; // whose flag
+  by: number;
+}
+
 export interface SimEvents {
   shots: ShotEvent[];
   kills: KillEvent[];
+  spawn: Projectile[];
+  flags: FlagEvent[];
+}
+
+// What a shot or bolt does to whatever it struck. Returns false for scenery.
+export function applyHit(P: SimParams, gun: GunParams, by: number, team: number, aim: V3, end: V3, other: RAPIER.RigidBody, ev: SimEvents): boolean {
+  if (!other.isDynamic()) return false;
+  const victim = other.userData;
+  if (victim instanceof Tank && team !== 0 && victim.team === team) return true; // no friendly fire
+  // Pull the push point towards the target's centre-of-mass height so a hit turns and shoves more than it tips.
+  const oc = other.worldCom();
+  const oUp = rot(other.rotation(), v3(0, 1, 0));
+  const lift = dot(sub(end, oc), oUp);
+  const at = sub(end, scale(oUp, lift * (1 - P.impactTilt)));
+  // Full twist, reduced shove: a hit spoils the aim without throwing the tank about.
+  const j = scale(aim, gun.impact);
+  other.applyImpulse(scale(j, P.impactShove), true);
+  other.applyTorqueImpulse(cross(sub(at, oc), j), true);
+  if (victim instanceof Tank) {
+    victim.shotHit = true;
+    if (victim.dead <= 0 && victim.shield <= 0) {
+      victim.hp -= gun.damage;
+      if (victim.hp <= 0) {
+        victim.hp = 0;
+        victim.dead = P.respawnTime;
+        ev.kills.push({ by, victim: victim.id, at: { ...other.translation() } });
+      }
+    }
+  }
+  return true;
 }
 
 export interface RayState {
@@ -55,6 +101,8 @@ function pointVel(body: RAPIER.RigidBody, p: V3): V3 {
 export class Tank {
   body: RAPIER.RigidBody;
   hull: HullParams;
+  gun: GunParams;
+  team = 0; // 0 = nobody's side
   id = 0;
   bot = false;
   input: TankInput = noInput();
@@ -74,7 +122,7 @@ export class Tank {
   boostLeft = 0;
   private lastVx = 0;
   private lastVz = 0;
-  private shotHit = false;
+  shotHit = false;
   private pushed = false;
   private cooldown = 0;
   private pending = -1;
@@ -87,10 +135,12 @@ export class Tank {
     private R: Rapier,
     private world: RAPIER.World,
     hull: HullParams,
+    gun: GunParams,
     pos: V3,
     yawDeg: number,
   ) {
     this.hull = hull;
+    this.gun = gun;
     const desc = R.RigidBodyDesc.dynamic()
       .setTranslation(pos.x, pos.y, pos.z)
       .setRotation(qYaw(yawDeg * DEG))
@@ -138,6 +188,11 @@ export class Tank {
     this.body.setAngvel(v3(), true);
     this.lastVx = this.lastVz = 0;
     this.snapshot();
+  }
+
+  // 0..1 while a delayed shot is winding up.
+  get charge(): number {
+    return this.pending >= 0 && this.gun.delay > 0 ? 1 - this.pending / this.gun.delay : 0;
   }
 
   getState(): TankState {
@@ -343,22 +398,22 @@ export class Tank {
     }
 
     // Turret
-    const tSpeed = P.turretSpeed * DEG;
+    const tSpeed = this.gun.turretSpeed * DEG;
     let tTarget = input.turret * tSpeed;
     if (input.center && input.turret === 0) {
       const wrapped = Math.atan2(Math.sin(this.turretYaw), Math.cos(this.turretYaw));
       this.turretYaw = wrapped;
       tTarget = clamp(-wrapped / dt, -tSpeed, tSpeed);
     }
-    const tA = P.turretAccel * DEG * dt;
+    const tA = this.gun.turretAccel * DEG * dt;
     this.turretVel += clamp(tTarget - this.turretVel, -tA, tA);
     this.turretYaw += this.turretVel * dt;
 
     // Gun
     this.cooldown -= dt;
     if (alive && input.fire && this.cooldown <= 0 && this.pending < 0) {
-      this.pending = P.fireDelay;
-      this.cooldown = P.reload + P.fireDelay;
+      this.pending = this.gun.delay;
+      this.cooldown = this.gun.reload + this.gun.delay;
     }
     if (this.pending >= 0) {
       this.pending -= dt;
@@ -372,13 +427,14 @@ export class Tank {
   private shoot(P: SimParams, ev: SimEvents) {
     const b = this.body;
     const h = this.hull;
+    const g = this.gun;
     const q = b.rotation();
     const up = rot(q, v3(0, 1, 0));
     const dir = rot(this.turretRotation(), v3(0, 0, -1));
     const pivot = add(b.translation(), scale(up, h.halfH + 0.3));
     const muzzle = add(pivot, scale(dir, h.halfL * 1.05));
     // Vertical auto-aim: the flattest ray in the allowed fan that finds a tank wins.
-    const cast = (d: V3) => this.world.castRay(new this.R.Ray(pivot, d), P.range, true, undefined, undefined, undefined, b);
+    const cast = (d: V3) => this.world.castRay(new this.R.Ray(pivot, d), g.range, true, undefined, undefined, undefined, b);
     const isTank = (hit: ReturnType<typeof cast>) => !!hit && !!hit.collider.parent()?.isDynamic();
     let aim = dir;
     let hit = cast(dir);
@@ -394,37 +450,18 @@ export class Tank {
         }
       }
     }
-    let end = add(pivot, scale(aim, P.range));
+    b.applyImpulseAtPoint(scale(dir, -g.recoil), muzzle, true);
+    if (g.kind === 'projectile') {
+      ev.spawn.push({ by: this.id, team: this.team, gun: g.name, p: pivot, v: scale(aim, g.projSpeed), life: g.range / g.projSpeed });
+      return;
+    }
+    let end = add(pivot, scale(aim, g.range));
     let struck = false;
     if (hit) {
       end = add(pivot, scale(aim, hit.timeOfImpact));
       const other = hit.collider.parent();
-      if (other && other.isDynamic()) {
-        // Pull the push point towards the target's centre-of-mass height so a hit turns and shoves more than it tips.
-        const oc = other.worldCom();
-        const oUp = rot(other.rotation(), v3(0, 1, 0));
-        const lift = dot(sub(end, oc), oUp);
-        const at = sub(end, scale(oUp, lift * (1 - P.impactTilt)));
-        // Full twist, reduced shove: a hit spoils the aim without throwing the tank about.
-        const j = scale(aim, P.impact);
-        other.applyImpulse(scale(j, P.impactShove), true);
-        other.applyTorqueImpulse(cross(sub(at, oc), j), true);
-        const victim = other.userData;
-        if (victim instanceof Tank) {
-          victim.shotHit = true;
-          if (victim.dead <= 0 && victim.shield <= 0) {
-            victim.hp -= P.damage;
-            if (victim.hp <= 0) {
-              victim.hp = 0;
-              victim.dead = P.respawnTime;
-              ev.kills.push({ by: this.id, victim: victim.id, at: { ...other.translation() } });
-            }
-          }
-        }
-        struck = true;
-      }
+      if (other) struck = applyHit(P, g, this.id, this.team, aim, end, other, ev);
     }
-    b.applyImpulseAtPoint(scale(dir, -P.recoil), muzzle, true);
-    ev.shots.push({ by: this.id, from: muzzle, to: end, hit: struck });
+    ev.shots.push({ by: this.id, gun: g.name, from: muzzle, to: end, hit: struck });
   }
 }

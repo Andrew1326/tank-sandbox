@@ -2,8 +2,9 @@ import type { HullParams } from './params';
 import { SimWorld, CRATE, Crate } from './world';
 import type { Tank } from './tank';
 
-export function spawnPoint(sim: SimWorld, n: number) {
-  return sim.map.spawns[n % sim.map.spawns.length];
+export function spawnPoint(sim: SimWorld, n: number, team = 0) {
+  const list = sim.map.teamSpawns?.[team] ?? sim.map.spawns;
+  return list[n % list.length];
 }
 
 export function addTargets(sim: SimWorld, hulls: Record<string, HullParams>): Tank[] {

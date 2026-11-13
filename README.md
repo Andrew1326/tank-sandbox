@@ -21,6 +21,8 @@ Tanks have health; a destroyed tank sits as a wreck, then returns to its spawn w
 
 Maps live in `src/sim/level.ts`: `range` (the tuning ground, default offline) and `yard` (a walled arena, default on the server; `MAP=range npm run server` to change, `?map=yard` to drive it offline). `npx tsx scripts/yard.ts` checks its spawns and ramps; `npx tsx scripts/bots.ts 4 90 40` runs scripted players against the server.
 
+Guns are `Slug` (single shot), `Lance` (charged beam) and `Pulse` (stream of bolts); pick hull and gun in the panel. On a map with bases the server runs capture the flag with two teams, Amber and Azure. `npx tsx scripts/guns.ts` and `npx tsx scripts/ctf.ts` check weapons and flag rules; `?showcase` lines up every hull and gun to look at the models (`src/render/models.ts`).
+
 Tuning sliders in online mode change the server's numbers for everyone connected.
 
 Add `?shot` to the URL when taking automated screenshots.

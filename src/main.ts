@@ -1,16 +1,18 @@
 import GUI from 'lil-gui';
 import { SimWorld, STEP } from './sim/world';
-import { HULLS, HullParams, defaultSim } from './sim/params';
+import { GUNS, GunParams, HULLS, HullParams, defaultSim } from './sim/params';
+import { TEAM_COLORS, TEAM_NAMES } from './sim/level';
 import { Tank, TankInput, noInput } from './sim/tank';
 import { addCrates, addTargets, spawnPoint } from './sim/setup';
 import { View } from './render/view';
 import { NetClient } from './net/client';
 import { NET_PORT } from './net/protocol';
 
-const STORE = 'tank-sandbox-v11';
+const STORE = 'tank-sandbox-v12';
 const query = new URLSearchParams(location.search);
 const online = query.has('online');
-const COLORS = { me: 0x2f9e8f, player: 0x3a78c9, bot: 0xb5653a };
+const COLORS = { me: 0x2f9e8f, player: 0x3a78c9, bot: 0x8f7a5c };
+const colorOf = (t: Tank, mine: boolean) => (t.team ? TEAM_COLORS[t.team] : mine ? COLORS.me : t.bot ? COLORS.bot : COLORS.player);
 
 const sim = await SimWorld.create(online ? 'yard' : query.get('map') ?? 'range');
 const SPAWN = spawnPoint(sim, 0);
@@ -19,7 +21,9 @@ const hud = document.getElementById('hud')!;
 
 // Working copies so the sliders never touch the presets.
 const hulls: Record<string, HullParams> = Object.fromEntries(Object.entries(HULLS).map(([k, v]) => [k, { ...v }]));
-const state = { hull: 'Dart', lag: 0, name: '' };
+const guns: Record<string, GunParams> = Object.fromEntries(Object.entries(GUNS).map(([k, v]) => [k, { ...v }]));
+sim.guns = guns;
+const state = { hull: 'Dart', gun: 'Slug', lag: 0, name: '' };
 try { state.name = localStorage.getItem('tank-name') ?? ''; } catch { /* ignore */ }
 if (query.get('name')) state.name = query.get('name')!;
 let feed = '';
@@ -28,8 +32,19 @@ const nameOf = (id: number) => net?.score.find((r) => r.id === id)?.name ?? (sim
 function onKills(kills: { by: number; victim: number; at: { x: number; y: number; z: number } }[]) {
   for (const k of kills) {
     view.explode(k.at);
-    feed = `${nameOf(k.by)} destroyed ${nameOf(k.victim)}`;
+    feed = k.by === k.victim ? `${nameOf(k.by)} fell off` : `${nameOf(k.by)} destroyed ${nameOf(k.victim)}`;
     feedUntil = performance.now() + 4000;
+  }
+}
+function onFlags(events: { what: string; team: number; by: number }[]) {
+  for (const e of events) {
+    const flag = `the ${TEAM_NAMES[e.team]} flag`;
+    feed = e.what === 'taken' ? `${nameOf(e.by)} took ${flag}`
+      : e.what === 'captured' ? `${nameOf(e.by)} captured ${flag}!`
+      : e.what === 'dropped' ? `${flag} was dropped`
+      : e.by ? `${nameOf(e.by)} returned ${flag}` : `${flag} returned to base`;
+    feed = feed[0].toUpperCase() + feed.slice(1);
+    feedUntil = performance.now() + 5000;
   }
 }
 if (!online) {
@@ -38,7 +53,9 @@ if (!online) {
     if (saved) {
       Object.assign(sim.params, saved.sim);
       for (const k of Object.keys(hulls)) Object.assign(hulls[k], saved.hulls?.[k]);
+      for (const k of Object.keys(guns)) Object.assign(guns[k], saved.guns?.[k]);
       if (hulls[saved.hull]) state.hull = saved.hull;
+      if (guns[saved.gun]) state.gun = saved.gun;
     }
   } catch { /* start from defaults */ }
 }
@@ -50,7 +67,7 @@ const save = () => {
     tuneTimer = window.setTimeout(() => net?.tune(), 120);
     return;
   }
-  try { localStorage.setItem(STORE, JSON.stringify({ sim: sim.params, hulls, hull: state.hull })); } catch { /* ignore */ }
+  try { localStorage.setItem(STORE, JSON.stringify({ sim: sim.params, hulls, guns, hull: state.hull, gun: state.gun })); } catch { /* ignore */ }
 };
 
 let player: Tank | null = null;
@@ -61,24 +78,40 @@ if (online) {
   net = new NetClient(`ws://${location.hostname}:${NET_PORT}`, sim, hulls, {
     onAdd: (t) => {
       const mine = t.id === net!.id;
-      view.addTank(t, mine ? COLORS.me : t.bot ? COLORS.bot : COLORS.player);
-      if (mine) { player = t; state.hull = t.hull.name; buildHullFolder(); resetMeters(); gui.controllersRecursive().forEach((c) => c.updateDisplay()); }
+      view.addTank(t, colorOf(t, mine));
+      if (mine) { player = t; state.hull = t.hull.name; state.gun = t.gun.name; buildHullFolder(); buildGunFolder(); resetMeters(); gui.controllersRecursive().forEach((c) => c.updateDisplay()); }
     },
     onRemove: (t) => { view.removeTank(t); if (t === player) player = null; },
     onCrate: (c) => view.addCrate(c),
     onShots: (s) => view.showShots(s),
     onKills,
+    onFlags,
     onTune: () => gui.controllersRecursive().forEach((c) => c.updateDisplay()),
     onMap: () => view.buildLevel(),
     before: () => view.beginCorrection(),
     after: () => view.endCorrection(),
-  }, state.hull, state.name);
+  }, guns, state.hull, state.gun, state.name);
 } else {
-  player = sim.addTank(hulls[state.hull], SPAWN, SPAWN.yaw);
+  player = sim.addTank(hulls[state.hull], SPAWN, SPAWN.yaw, undefined, guns[state.gun]);
   view.addTank(player, COLORS.me);
   targets = addTargets(sim, hulls);
   targets.forEach((t) => view.addTank(t, COLORS.bot));
   addCrates(sim).forEach((c) => view.addCrate(c));
+}
+
+// ?showcase lines up every hull with every gun in both team colours for a look at the designs.
+if (!online && query.has('showcase')) {
+  for (const t of targets) { view.removeTank(t); sim.removeTank(t); }
+  targets = [];
+  Object.keys(hulls).forEach((hn, i) => Object.keys(guns).forEach((gn, j) => {
+    const t = sim.addTank(hulls[hn], { x: (i - 1) * 7.5 - 22, y: 1.2, z: 70 - j * 9 }, 150, undefined, guns[gn]);
+    t.bot = true;
+    t.team = j === 1 ? 2 : j === 2 ? 0 : 1;
+    view.addTank(t, colorOf(t, false), `${hn} + ${gn}`);
+    targets.push(t);
+  }));
+  view.camDist = 10; view.camHeight = 5.5;
+  player?.place({ x: -22, y: 1.2, z: 82 }, 0);
 }
 
 function resetTargets() {
@@ -88,15 +121,16 @@ function resetTargets() {
   targets.forEach((t) => view.addTank(t, COLORS.bot));
 }
 
-function swapHull(name: string) {
-  if (net) { net.setHull(name); return; }
+function swapLoadout() {
+  if (net) { net.setLoadout(state.hull, state.gun); return; }
   if (!player) return;
   const p = player.body.translation();
   view.removeTank(player);
   sim.removeTank(player);
-  player = sim.addTank(hulls[name], { x: p.x, y: p.y + 0.6, z: p.z }, 0);
+  player = sim.addTank(hulls[state.hull], { x: p.x, y: p.y + 0.6, z: p.z }, 0, undefined, guns[state.gun]);
   view.addTank(player, COLORS.me);
   buildHullFolder();
+  buildGunFolder();
   resetMeters();
   save();
 }
@@ -165,8 +199,13 @@ function drawHud() {
         `replay ${net.replaySteps} ticks · fix ${f(net.correction * 100, 1)} cm (worst ${f(net.worstCorrection * 100, 0)})\n`
       : `OFFLINE – no server on port ${NET_PORT} (npm run server)\n`;
   }
+  if (sim.teamPlay) {
+    const st = (team: number) => { const f = sim.flags.find((x) => x.team === team); return !f || f.state === 0 ? 'at base' : f.state === 1 ? `taken by ${nameOf(f.by)}` : `dropped, back in ${f.t.toFixed(0)} s`; };
+    netLine += `${TEAM_NAMES[1].toUpperCase()} ${sim.teamScore[1]} : ${sim.teamScore[2]} ${TEAM_NAMES[2].toUpperCase()}${player?.team ? `   (you: ${TEAM_NAMES[player.team]})` : ''}\n` +
+      `flags: ${TEAM_NAMES[1]} ${st(1)} · ${TEAM_NAMES[2]} ${st(2)}\n`;
+  }
   if (net && net.score.length) {
-    netLine += [...net.score].sort((a, b) => b.k - a.k).map((r) => `${r.id === net!.id ? '›' : ' '} ${r.name.padEnd(16)} ${String(r.k).padStart(2)} / ${r.d}`).join('\n') + '\n';
+    netLine += [...net.score].sort((a, b) => b.k - a.k).map((r) => `${r.id === net!.id ? '›' : ' '} ${r.team ? TEAM_NAMES[r.team].slice(0, 2) + ' ' : ''}${r.name.padEnd(16)} ${String(r.k).padStart(2)} / ${r.d}${r.caps ? `  ⚑${r.caps}` : ''}`).join('\n') + '\n';
   }
   if (performance.now() < feedUntil) netLine += `✹ ${feed}\n`;
   if (!player) { hud.textContent = netLine + 'waiting for a tank…'; return; }
@@ -176,7 +215,7 @@ function drawHud() {
   const p = player.body.translation();
   hud.textContent =
     netLine +
-    `${player.hull.name}   ${player.dead > 0 ? `DESTROYED – back in ${player.dead.toFixed(1)} s` : `HP ${Math.ceil(player.hp)} / ${player.hull.hp}`}${player.shield > 0 ? '   shielded' : ''}\n` +
+    `${player.hull.name} + ${player.gun.name}   ${player.dead > 0 ? `DESTROYED – back in ${player.dead.toFixed(1)} s` : `HP ${Math.ceil(player.hp)} / ${player.hull.hp}`}${player.shield > 0 ? '   shielded' : ''}\n` +
     `speed    ${f(player.forwardSpeed, 2)} m/s   (top ${player.hull.topSpeed})${player.boostLeft > 0 ? `   BOOST ${player.boostLeft.toFixed(0)} s` : ''}\n` +
     `side     ${f(player.sideSpeed, 2)} m/s\n` +
     `yaw rate ${f(player.yawRate, 0)} °/s\n` +
@@ -192,7 +231,8 @@ function drawHud() {
 
 // --- tuning panel ---
 const gui = new GUI({ title: online ? 'Tuning (shared with server)' : 'Tuning', width: 300 });
-gui.add(state, 'hull', Object.keys(hulls)).name('Hull').onChange(swapHull).listen();
+gui.add(state, 'hull', Object.keys(hulls)).name('Hull').onChange(swapLoadout).listen();
+gui.add(state, 'gun', Object.keys(guns)).name('Gun').onChange(swapLoadout).listen();
 if (online) {
   gui.add(state, 'name').name('Name (reload to apply)').onFinishChange((v: string) => { try { localStorage.setItem('tank-name', v); } catch { /* ignore */ } });
   gui.add(state, 'lag', 0, 300, 5).name('Fake lag, ms each way').onChange((v: number) => { if (net) net.lagMs = v; });
@@ -234,20 +274,33 @@ susp.add(P, 'gripZeroDeg', 15, 89, 1).name('No grip beyond °');
 susp.add(P, 'angularDamping', 0, 3, 0.05).name('Spin damping');
 susp.add(P, 'gravity', 3, 30, 0.1).name('Gravity');
 susp.add(P, 'invertSteerInReverse').name('Flip steering in reverse');
-const gun = gui.addFolder('Turret & gun');
-gun.add(P, 'turretSpeed', 20, 250, 1).name('Turret speed °/s');
-gun.add(P, 'turretAccel', 50, 1500, 10).name('Turret accel');
-gun.add(P, 'impact', 0, 40000, 100).name('Impact on target N·s');
-gun.add(P, 'recoil', 0, 40000, 100).name('Recoil on shooter N·s');
+let gunFolder: GUI | null = null;
+function buildGunFolder() {
+  gunFolder?.destroy();
+  const g = guns[state.gun];
+  const fo = gui.addFolder(`Gun: ${g.name}`);
+  gunFolder = fo;
+  fo.add(g, 'damage', 0, 400, 1).name('Damage per hit');
+  fo.add(g, 'reload', 0.05, 10, 0.01).name('Reload s');
+  fo.add(g, 'delay', 0, 3, 0.05).name('Charge before shot s');
+  fo.add(g, 'impact', 0, 40000, 100).name('Impact on target N·s');
+  fo.add(g, 'recoil', 0, 40000, 50).name('Recoil on shooter N·s');
+  fo.add(g, 'turretSpeed', 20, 250, 1).name('Turret speed °/s');
+  fo.add(g, 'turretAccel', 50, 1500, 10).name('Turret accel');
+  fo.add(g, 'range', 10, 500, 5).name('Range m');
+  if (g.kind === 'projectile') fo.add(g, 'projSpeed', 10, 300, 5).name('Bolt speed m/s');
+  fo.onChange(save);
+  if (online) fo.close();
+}
+buildGunFolder();
+const gun = gui.addFolder('Hits & respawn');
 gun.add(P, 'impactShove', 0, 1, 0.05).name('Hit shoves the target (0–1)');
 gun.add(P, 'impactTilt', 0, 1, 0.05).name('Hit rocks the target (0–1)');
 gun.add(P, 'autoAimUp', 0, 25, 1).name('Auto-aim up °');
 gun.add(P, 'autoAimDown', 0, 25, 1).name('Auto-aim down °');
-gun.add(P, 'damage', 0, 400, 5).name('Damage per hit');
 gun.add(P, 'respawnTime', 0.5, 15, 0.5).name('Respawn after s');
 gun.add(P, 'spawnShield', 0, 10, 0.5).name('Spawn protection s');
-gun.add(P, 'fireDelay', 0, 2, 0.05).name('Delay before shot s');
-gun.add(P, 'reload', 0.1, 8, 0.1).name('Reload s');
+gun.add(P, 'flagReturn', 3, 60, 1).name('Dropped flag returns after s');
 const boost = gui.addFolder('Speed boost (key 4)');
 boost.add(P, 'boostSpeed', 1, 2.5, 0.05).name('Top speed ×');
 boost.add(P, 'boostAccel', 1, 2.5, 0.05).name('Acceleration ×');
@@ -266,11 +319,12 @@ if (online) { susp.close(); gun.close(); boost.close(); hit.close(); }
 gui.onChange(save);
 if (innerWidth < 700) gui.close();
 gui.add({ go: resetTargets }, 'go').name('Reset target tanks');
-gui.add({ go: () => { navigator.clipboard?.writeText(JSON.stringify({ sim: sim.params, hulls }, null, 2)); } }, 'go').name('Copy settings as JSON');
+gui.add({ go: () => { navigator.clipboard?.writeText(JSON.stringify({ sim: sim.params, hulls, guns }, null, 2)); } }, 'go').name('Copy settings as JSON');
 gui.add({
   go: () => {
     Object.assign(sim.params, defaultSim());
     for (const k of Object.keys(hulls)) Object.assign(hulls[k], HULLS[k]);
+    for (const k of Object.keys(guns)) Object.assign(guns[k], GUNS[k]);
     sim.tanks.forEach((t) => t.applyMass());
     gui.controllersRecursive().forEach((c) => c.updateDisplay());
     save();

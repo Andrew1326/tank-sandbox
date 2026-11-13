@@ -1,7 +1,7 @@
 // Connects a predicting client to a running server and reports how far prediction drifts.
 // Usage: npx tsx scripts/nettest.ts [one-way lag ms]
 import { SimWorld, STEP } from '../src/sim/world';
-import { HULLS } from '../src/sim/params';
+import { GUNS, HULLS } from '../src/sim/params';
 import { noInput } from '../src/sim/tank';
 import { NetClient } from '../src/net/client';
 import { NET_PORT } from '../src/net/protocol';
@@ -9,7 +9,7 @@ import { NET_PORT } from '../src/net/protocol';
 const lag = Number(process.argv[2] ?? 0);
 const sim = await SimWorld.create();
 const hulls = Object.fromEntries(Object.entries(HULLS).map(([k, v]) => [k, { ...v }]));
-const net = new NetClient(`ws://localhost:${NET_PORT}`, sim, hulls, {}, 'Dart', 'Script');
+const net = new NetClient(`ws://localhost:${NET_PORT}`, sim, hulls, {}, Object.fromEntries(Object.entries(GUNS).map(([k, v]) => [k, { ...v }])), 'Dart', 'Slug', 'Script');
 net.lagMs = lag;
 
 const plan: [number, object][] = [

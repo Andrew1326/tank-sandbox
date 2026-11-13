@@ -74,6 +74,9 @@ function slope(x: number, z: number, yaw: number, angle: number, rise: number, w
   };
 }
 
+export const TEAM_COLORS = [0x8f7a5c, 0xd98a2b, 0x3a78c9]; // nobody, amber, azure
+export const TEAM_NAMES = ['', 'Amber', 'Azure'];
+
 export interface Spot { x: number; y: number; z: number; yaw: number }
 export interface GameMap {
   name: string;
@@ -81,6 +84,8 @@ export interface GameMap {
   spawns: Spot[];
   targets: (Spot & { hull: string })[];
   crates: { x: number; y: number; z: number }[];
+  bases?: { team: number; x: number; z: number }[]; // present = two teams and flags
+  teamSpawns?: Record<number, Spot[]>;
 }
 
 // Walled yard: a raised deck in the middle, a walkway down each side, cover in between.
@@ -115,6 +120,8 @@ function buildYard(): Box[] {
   }
   // Kickers to jump off.
   boxes.push(slope(-22, 10, 0, 15, 1, 5, rampC), slope(22, -10, 180, 15, 1, 5, rampC));
+  // Base pads, painted on.
+  boxes.push({ p: [0, 0.008, -50], h: [3.2, 0.006, 3.2], color: TEAM_COLORS[1], deco: true }, { p: [0, 0.008, 50], h: [3.2, 0.006, 3.2], color: TEAM_COLORS[2], deco: true });
   return boxes;
 }
 
@@ -141,6 +148,11 @@ export const MAPS: Record<string, GameMap> = {
       { hull: 'Dart', x: -8, y: 1.2, z: -30, yaw: 90 },
       { hull: 'Anvil', x: 8, y: 1.2, z: 30, yaw: 90 },
     ],
+    bases: [{ team: 1, x: 0, z: -50 }, { team: 2, x: 0, z: 50 }],
+    teamSpawns: {
+      1: [[-8, -55], [24, -55], [-47, -52], [47, -52]].map(([x, z]) => ({ x, y: 1.2, z, yaw: 180 })),
+      2: [[8, 55], [-24, 55], [47, 52], [-47, 52]].map(([x, z]) => ({ x, y: 1.2, z, yaw: 0 })),
+    },
     crates: [{ x: 6, y: 3.2, z: 6 }, { x: -6, y: 3.2, z: -6 }, { x: 30, y: 0.7, z: 30 }, { x: -30, y: 0.7, z: -30 }, { x: 31.3, y: 0.7, z: 30 }, { x: -31.3, y: 0.7, z: -30 }],
   },
 };

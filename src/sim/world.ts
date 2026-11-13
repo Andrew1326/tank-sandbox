@@ -1,16 +1,25 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { MAPS, GameMap, Box } from './level';
-import { HullParams, SimParams, defaultSim } from './params';
-import { Tank, TankInput, TankState, ShotEvent, KillEvent, noInput } from './tank';
-import { V3, qMul, qYaw, qPitch, DEG } from './vec';
+import { GUNS, GunParams, HullParams, SimParams, defaultSim } from './params';
+import { Tank, TankInput, TankState, ShotEvent, KillEvent, FlagEvent, Projectile, SimEvents, applyHit, noInput } from './tank';
+import { V3, add, scale, len, norm, qMul, qYaw, qPitch, DEG } from './vec';
 
 export const STEP = 1 / 60;
-
 export const CRATE = { half: 0.6, mass: 250 };
+export const FLAG_REACH = 3.2; // metres from a flag or base that counts as touching it
 
-export interface TankSnap { id: number; hull: string; bot: boolean; s: TankState; in: TankInput }
+// state: 0 at base, 1 carried, 2 lying where it was dropped
+export interface Flag { team: number; state: 0 | 1 | 2; by: number; p: V3; t: number }
+
+export interface TankSnap { id: number; hull: string; gun: string; team: number; bot: boolean; s: TankState; in: TankInput }
 export interface CrateSnap { p: V3; q: { x: number; y: number; z: number; w: number }; lv: V3; av: V3 }
-export interface WorldSnap { tanks: TankSnap[]; crates: CrateSnap[] }
+export interface WorldSnap {
+  tanks: TankSnap[];
+  crates: CrateSnap[];
+  shells: Projectile[];
+  flags: Flag[];
+  teamScore: number[];
+}
 
 export interface Crate {
   body: RAPIER.RigidBody;
@@ -22,13 +31,18 @@ export interface Crate {
 export class SimWorld {
   world: RAPIER.World;
   params: SimParams = defaultSim();
+  guns: Record<string, GunParams> = GUNS;
   map: GameMap = MAPS.range;
   private statics: RAPIER.Collider[] = [];
   get level(): Box[] { return this.map.boxes; }
   tanks: Tank[] = [];
   crates: Crate[] = [];
+  shells: Projectile[] = [];
+  flags: Flag[] = [];
+  teamScore: number[] = [0, 0, 0];
   shots: ShotEvent[] = [];
   kills: KillEvent[] = [];
+  flagEvents: FlagEvent[] = [];
   time = 0;
 
   static async create(map = 'range'): Promise<SimWorld> {
@@ -57,12 +71,16 @@ export class SimWorld {
         .setFriction(0.6);
       this.statics.push(this.world.createCollider(desc));
     }
+    this.flags = (this.map.bases ?? []).map((b) => ({ team: b.team, state: 0, by: 0, p: { x: b.x, y: 0, z: b.z }, t: 0 }));
+    this.teamScore = [0, 0, 0];
   }
+
+  get teamPlay(): boolean { return this.flags.length > 0; }
 
   private nextId = 1;
 
-  addTank(hull: HullParams, pos: V3, yawDeg: number, id?: number): Tank {
-    const t = new Tank(RAPIER, this.world, hull, pos, yawDeg);
+  addTank(hull: HullParams, pos: V3, yawDeg: number, id?: number, gun: GunParams = this.guns.Slug): Tank {
+    const t = new Tank(RAPIER, this.world, hull, gun, pos, yawDeg);
     t.id = id ?? this.nextId;
     this.nextId = Math.max(this.nextId, t.id) + 1;
     this.tanks.push(t);
@@ -83,7 +101,7 @@ export class SimWorld {
   }
 
   // Each tank runs on its own .input; an array here overrides them by position.
-  // quiet = a replay step whose shots must not be shown again.
+  // quiet = a replay step whose events must not be shown again.
   step(inputs?: (TankInput | undefined)[], quiet = false) {
     this.world.gravity = { x: 0, y: -this.params.gravity, z: 0 };
     for (const t of this.tanks) t.snapshot();
@@ -91,21 +109,91 @@ export class SimWorld {
       c.prevPos = { ...c.body.translation() };
       c.prevRot = { ...c.body.rotation() };
     }
-    const ev = quiet ? { shots: [], kills: [] } : { shots: this.shots, kills: this.kills };
+    const ev: SimEvents = quiet
+      ? { shots: [], kills: [], spawn: [], flags: [] }
+      : { shots: this.shots, kills: this.kills, spawn: [], flags: this.flagEvents };
     this.tanks.forEach((t, i) => {
       if (inputs) t.input = inputs[i] ?? noInput();
       t.step(STEP, t.input, this.params, ev);
     });
+    this.flyShells(ev);
+    this.shells.push(...ev.spawn);
     this.world.step();
+    this.updateFlags(ev);
     this.time += STEP;
+  }
+
+  private flyShells(ev: SimEvents) {
+    const keep: Projectile[] = [];
+    for (const s of this.shells) {
+      const speed = len(s.v);
+      const dir = norm(s.v);
+      const owner = this.tanks.find((t) => t.id === s.by);
+      const hit = this.world.castRay(new RAPIER.Ray(s.p, dir), speed * STEP, true, undefined, undefined, undefined, owner?.body);
+      if (hit) {
+        const body = hit.collider.parent();
+        const gun = this.guns[s.gun];
+        if (body && gun) applyHit(this.params, gun, s.by, s.team, dir, add(s.p, scale(dir, hit.timeOfImpact)), body, ev);
+        continue;
+      }
+      s.p = add(s.p, scale(s.v, STEP));
+      s.life -= STEP;
+      if (s.life > 0) keep.push(s);
+    }
+    this.shells = keep;
+  }
+
+  private updateFlags(ev: SimEvents) {
+    if (!this.flags.length) return;
+    const near = (t: Tank, p: V3) => { const q = t.body.translation(); return Math.hypot(q.x - p.x, q.z - p.z) < FLAG_REACH; };
+    const baseOf = (team: number) => { const b = this.map.bases!.find((x) => x.team === team)!; return { x: b.x, y: 0, z: b.z }; };
+    for (const f of this.flags) {
+      if (f.state === 1) {
+        const carrier = this.tanks.find((t) => t.id === f.by);
+        if (!carrier || carrier.dead > 0) {
+          f.state = 2; f.t = this.params.flagReturn; f.by = 0;
+          ev.flags.push({ what: 'dropped', team: f.team, by: carrier?.id ?? 0 });
+          continue;
+        }
+        const q = carrier.body.translation();
+        f.p = { x: q.x, y: q.y, z: q.z };
+        const own = this.flags.find((x) => x.team === carrier.team);
+        if (own && own.state === 0 && near(carrier, baseOf(carrier.team))) {
+          this.teamScore[carrier.team]++;
+          ev.flags.push({ what: 'captured', team: f.team, by: carrier.id });
+          f.state = 0; f.by = 0; f.p = baseOf(f.team);
+        }
+        continue;
+      }
+      if (f.state === 2) {
+        f.t -= STEP;
+        if (f.t <= 0) { f.state = 0; f.p = baseOf(f.team); ev.flags.push({ what: 'returned', team: f.team, by: 0 }); continue; }
+      }
+      for (const t of this.tanks) {
+        if (t.dead > 0 || t.team === 0 || !near(t, f.p)) continue;
+        if (t.team !== f.team) {
+          f.state = 1; f.by = t.id;
+          ev.flags.push({ what: 'taken', team: f.team, by: t.id });
+          break;
+        }
+        if (f.state === 2) {
+          f.state = 0; f.p = baseOf(f.team);
+          ev.flags.push({ what: 'returned', team: f.team, by: t.id });
+          break;
+        }
+      }
+    }
   }
 
   capture(): WorldSnap {
     return {
-      tanks: this.tanks.map((t) => ({ id: t.id, hull: t.hull.name, bot: t.bot, s: t.getState(), in: t.input })),
+      tanks: this.tanks.map((t) => ({ id: t.id, hull: t.hull.name, gun: t.gun.name, team: t.team, bot: t.bot, s: t.getState(), in: t.input })),
       crates: this.crates.map((c) => ({
         p: { ...c.body.translation() }, q: { ...c.body.rotation() }, lv: { ...c.body.linvel() }, av: { ...c.body.angvel() },
       })),
+      shells: this.shells.map((s) => ({ ...s, p: { ...s.p }, v: { ...s.v } })),
+      flags: this.flags.map((f) => ({ ...f, p: { ...f.p } })),
+      teamScore: [...this.teamScore],
     };
   }
 
@@ -121,14 +209,15 @@ export class SimWorld {
     for (const ts of snap.tanks) {
       seen.add(ts.id);
       let t = this.tanks.find((x) => x.id === ts.id);
-      if (t && t.hull.name !== ts.hull) {
+      if (t && (t.hull.name !== ts.hull || t.gun.name !== ts.gun || t.team !== ts.team)) {
         onRemove?.(t);
         this.removeTank(t);
         t = undefined;
       }
       if (!t) {
-        t = this.addTank(hulls[ts.hull], ts.s.p, 0, ts.id);
+        t = this.addTank(hulls[ts.hull], ts.s.p, 0, ts.id, this.guns[ts.gun]);
         t.bot = ts.bot;
+        t.team = ts.team;
         t.setState(ts.s);
         t.snapshot();
         onAdd?.(t);
@@ -154,5 +243,8 @@ export class SimWorld {
       c.body.setLinvel(cs.lv, true);
       c.body.setAngvel(cs.av, true);
     });
+    this.shells = snap.shells.map((s) => ({ ...s, p: { ...s.p }, v: { ...s.v } }));
+    this.flags = snap.flags.map((f) => ({ ...f, p: { ...f.p } }));
+    this.teamScore = [...snap.teamScore];
   }
 }

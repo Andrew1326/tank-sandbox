@@ -8,15 +8,21 @@ const tiltOf = (t: any) => { const q = t.body.rotation(); return Math.acos(Math.
 const run = (t: any, s: number, input: object) => { for (let i = 0; i < s / STEP; i++) { t.input = { ...noInput(), ...input }; sim.step(); } };
 
 const bad: string[] = [];
-sim.map.spawns.forEach((sp, i) => {
+const allSpawns = [...sim.map.spawns, ...Object.values(sim.map.teamSpawns ?? {}).flat()];
+allSpawns.forEach((sp, i) => {
   const t = sim.addTank({ ...HULLS.Anvil }, sp, sp.yaw);
   run(t, 2, {});
   const p = t.body.translation();
   const moved = Math.hypot(p.x - sp.x, p.z - sp.z);
   if (moved > 0.3 || tiltOf(t) > 3 || Math.abs(p.y - 0.83) > 0.1) bad.push(`spawn ${i} (moved ${moved.toFixed(2)} m, tilt ${tiltOf(t).toFixed(0)}°, y ${p.y.toFixed(2)})`);
+  // It must also be able to drive straight out for two seconds.
+  run(t, 2, { throttle: 1 });
+  const q = t.body.translation();
+  const out = Math.hypot(q.x - p.x, q.z - p.z);
+  if (out < 5) bad.push(`spawn ${i} at (${sp.x}, ${sp.z}) is boxed in (drove only ${out.toFixed(1)} m)`);
   sim.removeTank(t);
 });
-console.log(`spawns: ${sim.map.spawns.length} checked, ${bad.length ? 'problems: ' + bad.join('; ') : 'all clear and level'}`);
+console.log(`spawns: ${allSpawns.length} checked, ${bad.length ? 'problems: ' + bad.join('; ') : 'all clear and level'}`);
 
 // start point, heading, expected deck height
 const climbs: [string, number, number, number, number][] = [

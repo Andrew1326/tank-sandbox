@@ -3,6 +3,8 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import type { SimWorld, Crate } from '../sim/world';
 import type { Tank } from '../sim/tank';
 import { DEG } from '../sim/vec';
+import { TEAM_COLORS } from '../sim/level';
+import { TankMats, buildHull, buildTurret, makeMats } from './models';
 
 function gridTexture(): THREE.Texture {
   const size = 1024;
@@ -56,7 +58,8 @@ interface TankView {
   offPos: THREE.Vector3; // leftover from the last network correction, fades out
   offQuat: THREE.Quaternion;
   shown: { pos: THREE.Vector3; quat: THREE.Quaternion } | null;
-  paint: THREE.MeshStandardMaterial;
+  mats: TankMats;
+  charge: THREE.Mesh | null;
   color: number;
   bar: THREE.Sprite;
   barCanvas: HTMLCanvasElement;
@@ -74,7 +77,9 @@ export class View {
   private tanks: TankView[] = [];
   private crates: { crate: Crate; mesh: THREE.Mesh }[] = [];
   private rayLines: THREE.LineSegments;
-  private tracers: { line: THREE.Line; life: number }[] = [];
+  private tracers: { line: THREE.Mesh; life: number; full: number }[] = [];
+  private shellMeshes: THREE.Mesh[] = [];
+  private flagViews: { team: number; group: THREE.Group }[] = [];
   private camYaw = 0;
   private camPos = new THREE.Vector3(0, 6, 12);
   private camReady = false;
@@ -149,26 +154,12 @@ export class View {
 
   addTank(tank: Tank, color: number, name = '') {
     const h = tank.hull;
-    const group = new THREE.Group();
-    const paint = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.15 });
-    const dark = new THREE.MeshStandardMaterial({ color: 0x24282d, roughness: 0.9 });
-    const body = new THREE.Mesh(new THREE.BoxGeometry(h.halfW * 2 - 0.7, h.halfH * 2, h.halfL * 2), paint);
-    const nose = new THREE.Mesh(new THREE.BoxGeometry(h.halfW * 2 - 0.9, h.halfH * 0.9, 0.5), dark);
-    nose.position.set(0, h.halfH * 0.3, -h.halfL + 0.2);
-    group.add(body, nose);
-    for (const side of [-1, 1]) {
-      const track = new THREE.Mesh(new THREE.BoxGeometry(0.42, h.halfH * 2 + 0.3, h.halfL * 2), dark);
-      track.position.set(side * (h.halfW - 0.21), -0.15, 0);
-      group.add(track);
-    }
-    const turret = new THREE.Group();
-    turret.position.y = h.halfH;
-    const dome = new THREE.Mesh(new THREE.CylinderGeometry(h.halfW * 0.55, h.halfW * 0.65, 0.5, 8), paint);
-    dome.position.y = 0.25;
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, h.halfL * 1.25, 10), dark);
-    barrel.rotation.x = Math.PI / 2;
-    barrel.position.set(0, 0.32, -h.halfL * 0.75);
-    turret.add(dome, barrel);
+    const mats = makeMats(color);
+    const group = buildHull(h, mats);
+    const roof = h.halfH * (h.name === 'Dart' ? 1.05 : h.name === 'Ranger' ? 1.1 : 1.15);
+    const built = buildTurret(tank.gun.name, h.halfW * 0.92, h.halfL * 1.05, mats);
+    const turret = built.group;
+    turret.position.y = roof;
     group.add(turret);
     group.traverse((o) => { o.castShadow = true; });
     this.scene.add(group);
@@ -178,7 +169,7 @@ export class View {
     bar.scale.set(3.2, 0.8, 1);
     bar.renderOrder = 998;
     this.scene.add(bar);
-    this.tanks.push({ tank, group, turret, offPos: new THREE.Vector3(), offQuat: new THREE.Quaternion(), shown: null, paint, color, bar, barCanvas, barKey: '', name });
+    this.tanks.push({ tank, group, turret, offPos: new THREE.Vector3(), offQuat: new THREE.Quaternion(), shown: null, mats, charge: built.charge, color, bar, barCanvas, barKey: '', name });
   }
 
   removeTank(tank: Tank) {
@@ -261,15 +252,31 @@ export class View {
     }
   }
 
-  showShots(shots: { from: { x: number; y: number; z: number }; to: { x: number; y: number; z: number }; hit: boolean }[]) {
+  showShots(shots: { gun?: string; from: { x: number; y: number; z: number }; to: { x: number; y: number; z: number }; hit: boolean }[]) {
     for (const s of shots) {
-      const geo = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(s.from.x, s.from.y, s.from.z),
-        new THREE.Vector3(s.to.x, s.to.y, s.to.z),
-      ]);
-      const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: s.hit ? 0xff7b3a : 0xfff2a8, transparent: true }));
-      this.scene.add(line);
-      this.tracers.push({ line, life: 0.35 });
+      const from = new THREE.Vector3(s.from.x, s.from.y, s.from.z), to = new THREE.Vector3(s.to.x, s.to.y, s.to.z);
+      const lance = s.gun === 'Lance';
+      // A cylinder stretched between the two points: a thin tracer, or a fat beam for the Lance.
+      const len = from.distanceTo(to);
+      const r = lance ? 0.14 : 0.035;
+      const mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(r, r, len, 6, 1, true),
+        new THREE.MeshBasicMaterial({ color: lance ? 0x9be8ff : s.hit ? 0xff9a4a : 0xfff2a8, transparent: true }),
+      );
+      mesh.position.copy(from).add(to).multiplyScalar(0.5);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), to.clone().sub(from).normalize());
+      this.scene.add(mesh);
+      this.tracers.push({ line: mesh, life: lance ? 0.6 : 0.25, full: lance ? 0.6 : 0.25 });
+      const flash = new THREE.Mesh(new THREE.SphereGeometry(lance ? 0.5 : 0.32, 8, 6), new THREE.MeshBasicMaterial({ color: lance ? 0xcff5ff : 0xffd27a, transparent: true }));
+      flash.position.copy(from);
+      this.scene.add(flash);
+      this.tracers.push({ line: flash, life: 0.09, full: 0.09 });
+      if (s.hit) {
+        const spark = new THREE.Mesh(new THREE.SphereGeometry(lance ? 0.7 : 0.4, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffb060, transparent: true }));
+        spark.position.copy(to);
+        this.scene.add(spark);
+        this.tracers.push({ line: spark, life: 0.15, full: 0.15 });
+      }
     }
   }
 
@@ -298,9 +305,16 @@ export class View {
       tv.group.quaternion.premultiply(tv.offQuat);
       tv.turret.rotation.y = t.prevTurret + (t.turretYaw - t.prevTurret) * alpha;
       // Wrecks go dark; a freshly respawned tank is see-through while protected.
-      tv.paint.color.setHex(t.dead > 0 ? 0x2b2b2b : tv.color);
-      tv.paint.transparent = t.shield > 0;
-      tv.paint.opacity = t.shield > 0 ? 0.45 : 1;
+      const wreck = t.dead > 0;
+      tv.mats.paint.color.setHex(wreck ? 0x2b2b2b : tv.color);
+      tv.mats.trim.color.setHex(wreck ? 0x1c1c1c : tv.color).multiplyScalar(wreck ? 1 : 0.62);
+      tv.mats.glow.emissiveIntensity = wreck ? 0 : 1.4;
+      for (const mat of [tv.mats.paint, tv.mats.trim]) { mat.transparent = t.shield > 0; mat.opacity = t.shield > 0 ? 0.45 : 1; }
+      if (tv.charge) {
+        const c = wreck ? 0 : t.charge;
+        tv.charge.visible = c > 0;
+        tv.charge.scale.setScalar(0.4 + c * 1.6);
+      }
       this.drawBar(tv);
       tv.bar.position.set(tv.group.position.x, tv.group.position.y + t.hull.halfH + 2.1, tv.group.position.z);
       tv.bar.visible = t !== follow; // your own health is in the HUD
@@ -329,13 +343,50 @@ export class View {
     for (let i = this.tracers.length - 1; i >= 0; i--) {
       const tr = this.tracers[i];
       tr.life -= dt;
-      (tr.line.material as THREE.LineBasicMaterial).opacity = Math.max(0, tr.life / 0.35);
+      (tr.line.material as THREE.MeshBasicMaterial).opacity = Math.max(0, tr.life / tr.full);
       if (tr.life <= 0) {
         this.scene.remove(tr.line);
         tr.line.geometry.dispose();
         this.tracers.splice(i, 1);
       }
     }
+
+    // Bolts in flight
+    const shells = this.sim.shells;
+    while (this.shellMeshes.length < shells.length) {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6), new THREE.MeshBasicMaterial({ color: 0x7dffb0 }));
+      this.scene.add(m);
+      this.shellMeshes.push(m);
+    }
+    this.shellMeshes.forEach((m, i) => {
+      const sh = shells[i];
+      m.visible = !!sh;
+      if (sh) m.position.set(sh.p.x + sh.v.x * alpha / 60, sh.p.y + sh.v.y * alpha / 60, sh.p.z + sh.v.z * alpha / 60);
+    });
+
+    // Flags: on their pad, lying where dropped, or riding on the carrier
+    const flags = this.sim.flags;
+    if (this.flagViews.length !== flags.length) {
+      for (const fv of this.flagViews) this.scene.remove(fv.group);
+      this.flagViews = flags.map((f) => {
+        const group = new THREE.Group();
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 4, 8), new THREE.MeshStandardMaterial({ color: 0xdfe3e8, metalness: 0.6, roughness: 0.4 }));
+        pole.position.y = 2;
+        const cloth = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.95, 0.05), new THREE.MeshStandardMaterial({ color: TEAM_COLORS[f.team], emissive: TEAM_COLORS[f.team], emissiveIntensity: 0.35 }));
+        cloth.position.set(0.78, 3.45, 0);
+        group.add(pole, cloth);
+        group.traverse((o) => { o.castShadow = true; });
+        this.scene.add(group);
+        return { team: f.team, group };
+      });
+    }
+    flags.forEach((f, i) => {
+      const g = this.flagViews[i].group;
+      const carrier = f.state === 1 ? this.tanks.find((t) => t.tank.id === f.by) : null;
+      if (carrier) g.position.copy(carrier.group.position).add(new THREE.Vector3(0, carrier.tank.hull.halfH + 0.2, carrier.tank.hull.halfL * 0.6).applyQuaternion(carrier.group.quaternion));
+      else g.position.set(f.p.x, f.state === 2 ? Math.max(0, f.p.y - 0.8) : 0, f.p.z);
+      g.rotation.z = f.state === 2 ? 0.35 : 0;
+    });
 
     this.rayLines.visible = this.showRays;
     if (this.showRays) {

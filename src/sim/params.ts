@@ -18,6 +18,20 @@ export interface HullParams {
   stability: number; // multiplies resistance to being tipped and pitched
 }
 
+export interface GunParams {
+  name: string;
+  kind: 'hitscan' | 'projectile';
+  damage: number;
+  reload: number; // seconds between shots, not counting the delay
+  delay: number; // charge-up between pressing fire and the shot
+  impact: number; // N·s on the target
+  recoil: number; // N·s on the shooter
+  turretSpeed: number;
+  turretAccel: number;
+  range: number;
+  projSpeed: number; // projectile guns only
+}
+
 export interface SimParams {
   gravity: number;
   suspFreq: number;
@@ -32,18 +46,11 @@ export interface SimParams {
   sideHeight: number;
   invertSteerInReverse: boolean;
   angularDamping: number;
-  turretSpeed: number;
-  turretAccel: number;
-  fireDelay: number;
-  reload: number;
-  impact: number;
-  recoil: number;
   impactShove: number; // share of a hit that moves the target bodily; the turning part is always kept
   impactTilt: number; // 1 = hit pushes where it lands, 0 = pushes through the centre of mass height
-  range: number;
-  damage: number;
   respawnTime: number;
   spawnShield: number;
+  flagReturn: number; // seconds a dropped flag waits before going home
   autoAimUp: number;
   autoAimDown: number;
   boostSpeed: number;
@@ -73,6 +80,13 @@ export const HULLS: Record<string, HullParams> = {
   },
 };
 
+// Slug: the all-rounder. Lance: slow charged shot that hits very hard. Pulse: a stream of slow bolts for close range.
+export const GUNS: Record<string, GunParams> = {
+  Slug: { name: 'Slug', kind: 'hitscan', damage: 60, reload: 1.5, delay: 0, impact: 7000, recoil: 3500, turretSpeed: 90, turretAccel: 400, range: 300, projSpeed: 0 },
+  Lance: { name: 'Lance', kind: 'hitscan', damage: 170, reload: 4.2, delay: 0.9, impact: 15000, recoil: 9000, turretSpeed: 60, turretAccel: 300, range: 400, projSpeed: 0 },
+  Pulse: { name: 'Pulse', kind: 'projectile', damage: 16, reload: 0.28, delay: 0, impact: 1300, recoil: 350, turretSpeed: 115, turretAccel: 500, range: 85, projSpeed: 70 },
+};
+
 export const defaultSim = (): SimParams => ({
   gravity: 9.81,
   suspFreq: 1.9,
@@ -87,18 +101,11 @@ export const defaultSim = (): SimParams => ({
   sideHeight: 0.3,
   invertSteerInReverse: false,
   angularDamping: 0.3,
-  turretSpeed: 90,
-  turretAccel: 400,
-  fireDelay: 0.0,
-  reload: 1.5,
-  impact: 7000,
-  recoil: 3500,
   impactShove: 0.35,
   impactTilt: 0.4,
-  range: 300,
-  damage: 60,
   respawnTime: 4,
   spawnShield: 2,
+  flagReturn: 20,
   autoAimUp: 8,
   autoAimDown: 10,
   boostSpeed: 1.4,
