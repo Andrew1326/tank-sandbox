@@ -200,6 +200,12 @@ export class Tank {
         this.boostLeft = 0;
       }
     }
+    if (this.dead <= 0 && b.translation().y < -15) {
+      // Drove off the edge of the world.
+      this.hp = 0;
+      this.dead = P.respawnTime;
+      ev.kills.push({ by: this.id, victim: this.id, at: { ...b.translation() } });
+    }
     const alive = this.dead <= 0;
     const h = this.hull;
     const m = h.mass;
