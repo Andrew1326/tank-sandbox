@@ -57,6 +57,7 @@ interface TankView {
   wasShielded: boolean;
   ice: THREE.Mesh[]; // glaze that thickens as the tank freezes
   burn: number; // paces the flames on a burning hull
+  laser: THREE.Mesh | null; // sight line shown while this tank is in its scope
 }
 
 export class View {
@@ -69,6 +70,7 @@ export class View {
   camHeight = 4.5;
   showRays = false;
   effects = true;
+  scope = { on: false, charge: 0, damage: 0 }; // read by the page to draw the scope overlay
   private tanks: TankView[] = [];
   private crates: { crate: Crate; mesh: THREE.Mesh }[] = [];
   private rayLines: THREE.LineSegments;
@@ -179,7 +181,7 @@ export class View {
     turret.position.y = roof;
     group.add(turret);
     group.traverse((o) => { o.castShadow = true; o.receiveShadow = true; });
-    const glowColor: Record<string, number> = { Ember: 0xff7a1a, Frost: 0xcdf3ff, Pulse: 0x7dffb0 };
+    const glowColor: Record<string, number> = { Ember: 0xff7a1a, Frost: 0xcdf3ff, Pulse: 0x7dffb0, Hawk: 0xff5a3a };
     mats.glow.emissive.setHex(glowColor[tank.gun.name] ?? 0x66d9ff);
     // Ice shell: one block over the hull, one over the turret, invisible until chilled.
     const iceMat = new THREE.MeshStandardMaterial({ color: 0xe6f6ff, map: this.frost, transparent: true, opacity: 0, roughness: 0.12, metalness: 0.05, emissive: 0x7fbfff, emissiveIntensity: 0.35, depthWrite: false });
@@ -201,7 +203,7 @@ export class View {
     this.tanks.push({
       tank, group, turret, barrel: built.barrel, muzzle: built.muzzle, left: hull.left, right: hull.right,
       offPos: new THREE.Vector3(), offQuat: new THREE.Quaternion(), shown: null, mats, charge: built.charge, color,
-      bar, barCanvas, barKey: '', name, recoil: 0, dust: 0, smoke: 0, marked: V(p), wasShielded: false, ice: [iceHull, iceTurret], burn: 0,
+      bar, barCanvas, barKey: '', name, recoil: 0, dust: 0, smoke: 0, marked: V(p), wasShielded: false, ice: [iceHull, iceTurret], burn: 0, laser: null,
     });
   }
 
@@ -210,6 +212,7 @@ export class View {
     if (i < 0) return;
     this.scene.remove(this.tanks[i].group);
     this.scene.remove(this.tanks[i].bar);
+    if (this.tanks[i].laser) this.scene.remove(this.tanks[i].laser!);
     this.tanks.splice(i, 1);
   }
 
@@ -288,18 +291,23 @@ export class View {
         this.sound.shot(s.gun, from.x, from.z);
       }
       if (s.k === 0) {
-        const lance = s.gun === 'Lance';
+        const lance = s.gun === 'Lance', hawk = s.gun === 'Hawk';
         const len = from.distanceTo(to);
-        const r = lance ? 0.13 : 0.03;
+        const r = lance ? 0.13 : hawk ? 0.04 + (s.power ?? 0) * 0.07 : 0.03;
         const mesh = new THREE.Mesh(
           new THREE.CylinderGeometry(r, r, len, 6, 1, true),
-          new THREE.MeshBasicMaterial({ color: lance ? 0x9be8ff : 0xfff2a8, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
+          new THREE.MeshBasicMaterial({ color: lance ? 0x9be8ff : hawk ? 0xffd9c2 : 0xfff2a8, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
         );
         mesh.position.copy(from).add(to).multiplyScalar(0.5);
         mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), to.clone().sub(from).normalize());
         this.scene.add(mesh);
-        const life = lance ? 0.7 : 0.14;
+        const life = lance ? 0.7 : hawk ? 0.45 : 0.14;
         this.beams.push({ mesh, life, full: life });
+        if (hawk && this.effects) {
+          // The round leaves a thin line of smoke hanging in the air.
+          const n = Math.min(60, Math.floor(len / 3));
+          for (let i = 1; i <= n; i++) this.fx.puff(from.clone().lerp(to, i / (n + 1)), { color: 0xd9d4cc, size: [0.2, 0.9], life: 0.9 + Math.random() * 0.6, alpha: 0.35, spread: 0.3, rise: 0.4 });
+        }
         if (lance && this.effects) {
           // Curls of vapour left hanging along the beam.
           const n = Math.min(40, Math.floor(len / 2.5));
@@ -345,6 +353,23 @@ export class View {
     this.drawBar(tv);
     tv.bar.position.set(tv.group.position.x, tv.group.position.y + h.halfH + 2.1, tv.group.position.z);
     tv.bar.visible = t !== follow; // your own health is in the HUD
+
+    // In the scope: a thin sight line gives the sniper away to everyone else.
+    if (t.scoped && t !== follow) {
+      if (!tv.laser) {
+        tv.laser = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1, 5, 1, true), new THREE.MeshBasicMaterial({ color: 0xff3a2a, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false }));
+        this.scene.add(tv.laser);
+      }
+      const from = tv.muzzle.getWorldPosition(new THREE.Vector3());
+      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(tv.turret.getWorldQuaternion(new THREE.Quaternion()));
+      const hit = this.sim.world.castRay(new RAPIER.Ray(from, dir), t.gun.range, true, undefined, undefined, undefined, t.body);
+      const len = hit ? hit.timeOfImpact : t.gun.range;
+      tv.laser.visible = true;
+      tv.laser.position.copy(from).addScaledVector(dir, len / 2);
+      tv.laser.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      tv.laser.scale.set(1 + t.charge * 1.5, len, 1 + t.charge * 1.5);
+      (tv.laser.material as THREE.MeshBasicMaterial).opacity = 0.35 + t.charge * 0.5;
+    } else if (tv.laser) tv.laser.visible = false;
 
     // Barrel slides back and eases home.
     tv.recoil = Math.max(0, tv.recoil - dt * (t.gun.name === 'Pulse' ? 14 : 3.5));
@@ -534,7 +559,32 @@ export class View {
 
     // Chase camera: sits behind the turret and eases after it.
     const fv = this.tanks.find((t) => t.tank === follow);
-    if (fv) {
+    const inScope = !!fv && fv.tank.scoped;
+    if (fv) fv.group.visible = !inScope; // looking through the sight, not at our own turret
+    if (inScope !== this.scope.on) { this.scope.on = inScope; this.sound.click(); }
+    if (fv && inScope) {
+      // Scope view: the eye sits on the gun and the picture tightens as the shot builds.
+      const t = fv.tank;
+      const quat = fv.turret.getWorldQuaternion(new THREE.Quaternion());
+      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
+      const eye = fv.turret.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.56, -0.8).applyQuaternion(quat));
+      const sway = (1 - t.charge) * 0.004; // settles as you hold
+      this.camera.position.copy(eye);
+      this.camera.quaternion.copy(quat);
+      this.camera.rotateX(Math.sin(this.clock * 1.7) * sway);
+      this.camera.rotateY(Math.cos(this.clock * 1.3) * sway);
+      const fov = 24 - t.charge * 13;
+      this.camera.fov += (fov - this.camera.fov) * (1 - Math.exp(-dt * 10));
+      this.camera.updateProjectionMatrix();
+      this.camPos.copy(eye).addScaledVector(dir, -this.camDist).setY(eye.y + this.camHeight); // where the chase camera will resume from
+      this.camYaw = Math.atan2(-dir.x, -dir.z);
+      this.scope.charge = t.charge;
+      this.scope.damage = t.gun.damage + (t.gun.maxDamage - t.gun.damage) * t.charge;
+      this.sun.position.set(eye.x + 45, 70, eye.z + 25);
+      this.sun.target.position.copy(eye);
+      this.sound.listener = { x: eye.x, z: eye.z, yaw: this.camYaw };
+      this.sound.drive(0, 0, t.charge, true);
+    } else if (fv) {
       const target = fv.group.position;
       const e = new THREE.Euler().setFromQuaternion(fv.group.quaternion, 'YXZ');
       const want = e.y + fv.turret.rotation.y;

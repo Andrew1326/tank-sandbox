@@ -30,7 +30,7 @@ const bots: Bot[] = [];
 for (let i = 0; i < count; i++) {
   const sim = await SimWorld.create();
   const hulls = Object.fromEntries(Object.entries(HULLS).map(([k, v]) => [k, { ...v }]));
-  const hull = hullNames[i % hullNames.length], gun = gunNames[(i + Math.floor(i / 3)) % gunNames.length];
+  const hull = hullNames[i % hullNames.length], gun = gunNames[i % gunNames.length];
   const name = `${hull}-${gun}-${i + 1}`;
   const guns = Object.fromEntries(Object.entries(GUNS).map(([k, v]) => [k, { ...v }]));
   const net = new NetClient(`ws://localhost:${NET_PORT}`, sim, hulls, {}, guns, hull, gun, name);
@@ -124,7 +124,8 @@ function think(bot: Bot) {
     const q = target.body.translation();
     const aimErr = wrap(Math.atan2(-(q.x - p.x), -(q.z - p.z)) - yawOf(me) - me.turretYaw);
     input.turret = Math.abs(aimErr) > 0.02 ? Math.sign(aimErr) : 0;
-    input.fire = Math.abs(aimErr) < 0.06;
+    // A sniper holds the shot until it is mostly charged, then lets go.
+    input.fire = me.gun.kind === 'sniper' ? Math.abs(aimErr) < 0.1 && me.charge < 0.7 : Math.abs(aimErr) < 0.06;
   } else {
     input.center = true;
   }

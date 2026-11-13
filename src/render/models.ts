@@ -149,7 +149,25 @@ export function buildTurret(gun: string, size: number, reach: number, m: TankMat
   const ring = new THREE.Mesh(new THREE.CylinderGeometry(s * 0.6, s * 0.66, 0.08, 16), m.dark);
   ring.position.y = 0.04;
   g.add(ring);
-  if (gun === 'Ember') {
+  if (gun === 'Hawk') {
+    // Long, slim rifle: boxy breech, fluted barrel with a slotted brake, and a scope tube riding on top.
+    g.add(slab([[-s * 0.36, -s * 0.7], [-s * 0.46, s * 0.1], [-s * 0.3, s * 0.85], [s * 0.3, s * 0.85], [s * 0.46, s * 0.1], [s * 0.36, -s * 0.7]], 0.08, 0.38, m.paint));
+    g.add(box(s * 0.5, 0.24, s * 0.5, m.trim, 0, 0.26, s * 0.95)); // counterweight
+    const len = reach - s * 0.65;
+    barrel.add(tube(0.085, len, m.dark, 0, 0.26, -(s * 0.65 + len), 0.06));
+    for (let i = 0; i < 3; i++) barrel.add(tube(0.11, 0.07, m.metal, 0, 0.26, -(s * 0.9 + i * 0.22)));
+    barrel.add(box(0.26, 0.12, 0.34, m.metal, 0, 0.26, -reach + 0.17)); // brake
+    const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, s * 1.1, 10), m.dark);
+    scope.rotation.x = Math.PI / 2;
+    scope.position.set(0, 0.56, -s * 0.1);
+    g.add(scope, box(0.05, 0.14, 0.08, m.metal, 0, 0.46, -s * 0.4), box(0.05, 0.14, 0.08, m.metal, 0, 0.46, s * 0.2));
+    g.add(tube(0.085, 0.06, m.glow, 0, 0.56, -(s * 0.1 + s * 0.55 + 0.06))); // lit lens
+    charge = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff5a3a, transparent: true, opacity: 0.9 }));
+    charge.position.set(0, 0.26, -reach);
+    charge.visible = false;
+    g.add(charge);
+    muzzle.position.set(0, 0.26, -reach);
+  } else if (gun === 'Ember') {
     // Squat housing between two fuel bottles, feeding a flared nozzle with a pilot light.
     g.add(slab([[-s * 0.45, -s * 0.5], [-s * 0.5, s * 0.5], [s * 0.5, s * 0.5], [s * 0.45, -s * 0.5]], 0.08, 0.4, m.paint));
     for (const sx of [-1, 1]) {

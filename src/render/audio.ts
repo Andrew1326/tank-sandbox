@@ -71,7 +71,12 @@ export class Sound {
   shot(gun: string, x?: number, z?: number) {
     if (!this.ctx) return;
     const out = this.place(x, z);
-    if (gun === 'Lance') {
+    if (gun === 'Hawk') {
+      // A hard crack with a long tail rolling away.
+      this.burst(out, 0.07, 1.2, 12000, 3000);
+      this.tone(out, 'sine', 180, 30, 0.45, 1.1);
+      this.burst(out, 0.9, 0.6, 2600, 120);
+    } else if (gun === 'Lance') {
       this.tone(out, 'sawtooth', 2400, 140, 0.45, 0.5);
       this.tone(out, 'sine', 160, 38, 0.5, 0.9);
       this.burst(out, 0.35, 0.5, 9000, 400);
@@ -117,6 +122,12 @@ export class Sound {
       this.sprays[kind] = g;
     }
     g.gain.setTargetAtTime(level * (kind === 'Ember' ? 0.9 : 0.35), this.ctx.currentTime, 0.06);
+  }
+
+  click() {
+    if (!this.ctx) return;
+    this.tone(this.master, 'square', 1400, 900, 0.03, 0.12);
+    this.tone(this.master, 'square', 700, 500, 0.04, 0.1, 0.05);
   }
 
   jingle(kind: 'good' | 'bad' | 'neutral') {

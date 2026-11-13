@@ -8,7 +8,7 @@ import { View } from './render/view';
 import { NetClient } from './net/client';
 import { NET_PORT } from './net/protocol';
 
-const STORE = 'tank-sandbox-v13';
+const STORE = 'tank-sandbox-v14';
 const query = new URLSearchParams(location.search);
 const online = query.has('online');
 const COLORS = { me: 0x2f9e8f, player: 0x3a78c9, bot: 0x8f7a5c };
@@ -197,7 +197,15 @@ function updateMeters(input: TankInput) {
   lastThrottle = input.throttle;
 }
 const f = (x: number, d = 2, unit = '') => (Number.isFinite(x) ? x.toFixed(d) + unit : '–');
+const scopeEl = document.getElementById('scope')!;
+const scopeRead = scopeEl.querySelector('.read') as HTMLElement;
 function drawHud() {
+  scopeEl.style.display = view.scope.on ? 'block' : 'none';
+  if (view.scope.on) {
+    scopeEl.style.setProperty('--c', (view.scope.charge * 100).toFixed(1));
+    scopeRead.textContent = `CHARGE ${(view.scope.charge * 100).toFixed(0)}%  ·  ${view.scope.damage.toFixed(0)} DAMAGE  ·  release to fire`;
+  }
+  hud.style.opacity = view.scope.on ? '0.35' : '1';
   let netLine = '';
   if (net) {
     netLine = net.connected
@@ -305,6 +313,11 @@ function buildGunFolder() {
     if (g.kind === 'hitscan') {
       fo.add(g, 'pierce', 0, 8, 1).name('Goes through extra tanks');
       fo.add(g, 'pierceKeep', 0.1, 1, 0.05).name('Power kept per tank');
+    }
+    if (g.kind === 'sniper') {
+      fo.add(g, 'maxDamage', 0, 500, 5).name('Full-charge damage');
+      fo.add(g, 'scopeCharge', 0.3, 8, 0.1).name('Seconds to full charge');
+      fo.add(g, 'scopeTurn', 0.05, 1, 0.05).name('Turret speed in scope ×');
     }
   }
   fo.add(g, 'turretSpeed', 20, 250, 1).name('Turret speed °/s');

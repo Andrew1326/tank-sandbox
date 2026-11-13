@@ -16,6 +16,7 @@ export const noInput = (): TankInput => ({ throttle: 0, steer: 0, turret: 0, cen
 export interface ShotEvent {
   by: number;
   gun: string;
+  power?: number; // sniper: 0 snap shot .. 1 fully charged
   k: 0 | 1 | 2; // 0 = shot with a visible path, 1 = muzzle only (a bolt leaving), 2 = impact only (a bolt landing)
   from: V3;
   to: V3;
@@ -28,7 +29,7 @@ export interface TankState {
   ty: number; tv: number; cd: number; pe: number; bo: number;
   lx: number; lz: number; pu: boolean;
   hp: number; de: number; iv: number; hm: V3; hy: number;
-  tp: number; en: number; sf: boolean; bb: number;
+  tp: number; en: number; sf: boolean; bb: number; ht: number;
 }
 
 export interface KillEvent {
@@ -105,6 +106,7 @@ export class Tank {
   energy = 1; // stream guns: how full the tank is
   streaming = false; // spraying this tick
   burnBy = 0; // who lit the fire, for the kill credit
+  hold = 0; // sniper: how long fire has been held
   hp = 0;
   dead = 0; // seconds until respawn, 0 = alive
   shield = 0; // seconds of spawn protection left
@@ -199,8 +201,14 @@ export class Tank {
     }
   }
 
+  // Looking down the scope: the tank cannot drive and the turret creeps.
+  get scoped(): boolean {
+    return this.gun.kind === 'sniper' && this.dead <= 0 && this.hold >= this.gun.delay;
+  }
+
   // 0..1 while a delayed shot is winding up.
   get charge(): number {
+    if (this.gun.kind === 'sniper') return this.scoped ? Math.min(1, (this.hold - this.gun.delay) / this.gun.scopeCharge) : 0;
     return this.pending >= 0 && this.gun.delay > 0 ? 1 - this.pending / this.gun.delay : 0;
   }
 
@@ -211,7 +219,7 @@ export class Tank {
       ty: this.turretYaw, tv: this.turretVel, cd: this.cooldown, pe: this.pending, bo: this.boostLeft,
       lx: this.lastVx, lz: this.lastVz, pu: this.pushed,
       hp: this.hp, de: this.dead, iv: this.shield, hm: { ...this.home }, hy: this.homeYaw,
-      tp: this.temp, en: this.energy, sf: this.streaming, bb: this.burnBy,
+      tp: this.temp, en: this.energy, sf: this.streaming, bb: this.burnBy, ht: this.hold,
     };
   }
 
@@ -224,7 +232,7 @@ export class Tank {
     this.turretYaw = s.ty; this.turretVel = s.tv; this.cooldown = s.cd; this.pending = s.pe; this.boostLeft = s.bo;
     this.lastVx = s.lx; this.lastVz = s.lz; this.pushed = s.pu;
     this.hp = s.hp; this.dead = s.de; this.shield = s.iv; this.home = { ...s.hm }; this.homeYaw = s.hy;
-    this.temp = s.tp; this.energy = s.en; this.streaming = s.sf; this.burnBy = s.bb;
+    this.temp = s.tp; this.energy = s.en; this.streaming = s.sf; this.burnBy = s.bb; this.hold = s.ht;
     this.shotHit = false;
   }
 
@@ -266,6 +274,7 @@ export class Tank {
         this.boostLeft = 0;
         this.temp = 0;
         this.energy = 1;
+        this.hold = 0;
       }
     }
     if (this.dead <= 0 && b.translation().y < -15) {
@@ -275,6 +284,9 @@ export class Tank {
       ev.kills.push({ by: this.id, victim: this.id, at: { ...b.translation() } });
     }
     const alive = this.dead <= 0;
+    if (!alive) this.hold = 0;
+    const scoped = this.scoped;
+    if (scoped) input = { ...input, throttle: 0, steer: 0 };
     // Heat burns and fades; cold just fades. A wreck cools off at once.
     if (!alive) this.temp = 0;
     if (this.temp > 0) {
@@ -424,7 +436,7 @@ export class Tank {
     }
 
     // Turret
-    const tSpeed = this.gun.turretSpeed * DEG * chill;
+    const tSpeed = this.gun.turretSpeed * DEG * chill * (scoped ? this.gun.scopeTurn : 1);
     let tTarget = input.turret * tSpeed;
     if (input.center && input.turret === 0) {
       const wrapped = Math.atan2(Math.sin(this.turretYaw), Math.cos(this.turretYaw));
@@ -446,6 +458,22 @@ export class Tank {
     }
     this.streaming = false;
 
+    // Sniper: holding fire brings the scope up and builds the shot; letting go fires it.
+    if (this.gun.kind === 'sniper') {
+      this.cooldown -= dt;
+      if (!alive || this.cooldown > 0) this.hold = 0;
+      else if (input.fire) this.hold += dt;
+      else if (this.hold > 0) {
+        this.shoot(P, ev, this.charge);
+        this.hold = 0;
+        this.cooldown = this.gun.reload;
+      }
+      const v1n = b.linvel();
+      this.lastVx = v1n.x;
+      this.lastVz = v1n.z;
+      return;
+    }
+
     // Gun
     this.cooldown -= dt;
     if (alive && input.fire && this.cooldown <= 0 && this.pending < 0) {
@@ -461,10 +489,13 @@ export class Tank {
     this.lastVz = v1.z;
   }
 
-  private shoot(P: SimParams, ev: SimEvents) {
+  private shoot(P: SimParams, ev: SimEvents, power = 0) {
     const b = this.body;
     const h = this.hull;
-    const g = this.gun;
+    // A sniper's shot scales with how long it was held in the scope.
+    const g = this.gun.kind === 'sniper'
+      ? { ...this.gun, damage: this.gun.damage + (this.gun.maxDamage - this.gun.damage) * power, impact: this.gun.impact * (0.4 + power), recoil: this.gun.recoil * (0.4 + power) }
+      : this.gun;
     const q = b.rotation();
     const up = rot(q, v3(0, 1, 0));
     const dir = rot(this.turretRotation(), v3(0, 0, -1));
@@ -520,6 +551,6 @@ export class Tank {
       through.impact *= g.pierceKeep;
       if (n === g.pierce) break;
     }
-    ev.shots.push({ by: this.id, gun: g.name, k: 0, from: muzzle, to: end, hit: struck });
+    ev.shots.push({ by: this.id, gun: g.name, k: 0, from: muzzle, to: end, hit: struck, power });
   }
 }
