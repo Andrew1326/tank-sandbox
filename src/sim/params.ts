@@ -38,6 +38,7 @@ export interface SimParams {
   reload: number;
   impact: number;
   recoil: number;
+  impactShove: number; // share of a hit that moves the target bodily; the turning part is always kept
   impactTilt: number; // 1 = hit pushes where it lands, 0 = pushes through the centre of mass height
   range: number;
   damage: number;
@@ -58,17 +59,17 @@ export const HULLS: Record<string, HullParams> = {
   Dart: {
     name: 'Dart', halfW: 1.15, halfH: 0.38, halfL: 1.75, mass: 2200,
     topSpeed: 10, accel: 8.5, reverseAccel: 12, coastDecel: 8, lateralAccel: 27,
-    turnSpeed: 130, turnAccel: 190, antiTurnAccel: 350, comY: -0.18, stability: 3, hp: 150,
+    turnSpeed: 130, turnAccel: 190, antiTurnAccel: 350, comY: -0.18, stability: 3, hp: 190,
   },
   Ranger: {
     name: 'Ranger', halfW: 1.4, halfH: 0.45, halfL: 2.0, mass: 2600,
     topSpeed: 7.5, accel: 7.5, reverseAccel: 10, coastDecel: 7, lateralAccel: 18.5,
-    turnSpeed: 115, turnAccel: 170, antiTurnAccel: 300, comY: -0.12, stability: 1, hp: 240,
+    turnSpeed: 115, turnAccel: 170, antiTurnAccel: 300, comY: -0.12, stability: 1, hp: 270,
   },
   Anvil: {
     name: 'Anvil', halfW: 1.75, halfH: 0.55, halfL: 2.3, mass: 5000,
     topSpeed: 4.5, accel: 6, reverseAccel: 8, coastDecel: 7, lateralAccel: 14,
-    turnSpeed: 85, turnAccel: 130, antiTurnAccel: 250, comY: -0.15, stability: 1, hp: 380,
+    turnSpeed: 85, turnAccel: 130, antiTurnAccel: 250, comY: -0.15, stability: 1, hp: 330,
   },
 };
 
@@ -92,6 +93,7 @@ export const defaultSim = (): SimParams => ({
   reload: 1.5,
   impact: 7000,
   recoil: 3500,
+  impactShove: 0.35,
   impactTilt: 0.4,
   range: 300,
   damage: 60,

@@ -19,6 +19,7 @@ interface Bot {
   shots: number; hits: number; sumFix: number; n: number; worstFix: number; maxReplay: number;
   flippedFor: number; flips: number; deadTicks: number; stuckFor: number; mood: number; moodLeft: number;
   bad: string[];
+  lastHp: number; hurtAgo: number; big: Record<string, { n: number; worst: number }>;
 }
 
 const bots: Bot[] = [];
@@ -28,7 +29,7 @@ for (let i = 0; i < count; i++) {
   const name = `Bot${i + 1}-${hullNames[i % hullNames.length]}`;
   const net = new NetClient(`ws://localhost:${NET_PORT}`, sim, hulls, {}, hullNames[i % hullNames.length], name);
   net.lagMs = lag;
-  bots.push({ name, sim, net, shots: 0, hits: 0, sumFix: 0, n: 0, worstFix: 0, maxReplay: 0, flippedFor: 0, flips: 0, deadTicks: 0, stuckFor: 0, mood: 1, moodLeft: 0, bad: [] });
+  bots.push({ name, sim, net, shots: 0, hits: 0, sumFix: 0, n: 0, worstFix: 0, maxReplay: 0, flippedFor: 0, flips: 0, deadTicks: 0, stuckFor: 0, mood: 1, moodLeft: 0, bad: [], lastHp: 0, hurtAgo: 9, big: {} });
 }
 
 function think(bot: Bot) {
@@ -90,6 +91,17 @@ const timer = setInterval(() => {
       bot.sim.kills.length = 0;
       if (me) {
         bot.sumFix += bot.net.correction; bot.n++;
+        // Sort every large correction by what was going on at the time.
+        bot.hurtAgo = me.hp < bot.lastHp ? 0 : bot.hurtAgo + STEP;
+        bot.lastHp = me.hp;
+        if (bot.net.correction > 0.25) {
+          const p = me.body.translation();
+          const near = bot.sim.tanks.some((t) => t !== me && Math.hypot(t.body.translation().x - p.x, t.body.translation().z - p.z) < 6);
+          const why = me.dead > 0 || me.shield > 0 ? 'death/respawn' : bot.hurtAgo < 0.5 ? 'just hit' : near ? 'tank nearby' : 'other';
+          const c = (bot.big[why] ??= { n: 0, worst: 0 });
+          c.n++; c.worst = Math.max(c.worst, bot.net.correction);
+          bot.net.correction = 0;
+        }
         bot.worstFix = Math.max(bot.worstFix, bot.net.correction);
         bot.maxReplay = Math.max(bot.maxReplay, bot.net.replaySteps);
         const y = me.body.translation().y;
@@ -111,6 +123,12 @@ const timer = setInterval(() => {
           `${((b.sumFix / Math.max(1, b.n)) * 100).toFixed(1).padStart(7)}cm ${(b.worstFix * 100).toFixed(0).padStart(8)}cm ${String(b.maxReplay).padStart(7)}  ${b.bad.join(', ') || '-'}`,
       );
     }
+    const all: Record<string, { n: number; worst: number }> = {};
+    for (const b of bots) for (const [why, c] of Object.entries(b.big)) { const a = (all[why] ??= { n: 0, worst: 0 }); a.n += c.n; a.worst = Math.max(a.worst, c.worst); }
+    console.log('corrections over 25 cm: ' + (Object.entries(all).map(([why, c]) => `${why} ×${c.n} (worst ${(c.worst * 100).toFixed(0)} cm)`).join(', ') || 'none'));
+    const ps = bots.reduce((a, b) => a + b.shots, 0), ph = bots.reduce((a, b) => a + b.hits, 0);
+    const ss = bots.reduce((a, b) => a + b.net.serverShots, 0), sh = bots.reduce((a, b) => a + b.net.serverHits, 0);
+    console.log(`hits: clients predicted ${ph}/${ps} (${((ph / Math.max(1, ps)) * 100).toFixed(0)}%), server resolved ${sh}/${ss} (${((sh / Math.max(1, ss)) * 100).toFixed(0)}%)`);
     const k = score.reduce((a, r) => a + r.k, 0), d = score.reduce((a, r) => a + r.d, 0);
     console.log(`server totals: ${k} kills, ${d} deaths among players (difference = deaths by falling off or kills of targets)`);
     process.exit(0);

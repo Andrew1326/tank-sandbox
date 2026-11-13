@@ -405,7 +405,10 @@ export class Tank {
         const oUp = rot(other.rotation(), v3(0, 1, 0));
         const lift = dot(sub(end, oc), oUp);
         const at = sub(end, scale(oUp, lift * (1 - P.impactTilt)));
-        other.applyImpulseAtPoint(scale(aim, P.impact), at, true);
+        // Full twist, reduced shove: a hit spoils the aim without throwing the tank about.
+        const j = scale(aim, P.impact);
+        other.applyImpulse(scale(j, P.impactShove), true);
+        other.applyTorqueImpulse(cross(sub(at, oc), j), true);
         const victim = other.userData;
         if (victim instanceof Tank) {
           victim.shotHit = true;

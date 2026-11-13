@@ -28,6 +28,8 @@ export class NetClient {
   correction = 0; // metres our own tank moved when the last snapshot was applied
   worstCorrection = 0;
   score: ScoreRow[] = [];
+  serverShots = 0; // our own shots as the server resolved them
+  serverHits = 0;
   private kills: KillEvent[] = [];
   private ws: WebSocket;
   private seq = 0;
@@ -97,6 +99,7 @@ export class NetClient {
     const snap = this.latest;
     if (!snap || !this.id) return;
     this.latest = null;
+    for (const s of this.shots) if (s.by === this.id) { this.serverShots++; if (s.hit) this.serverHits++; }
     const others = this.shots.filter((s) => s.by !== this.id);
     this.shots = [];
     if (others.length) this.hooks.onShots?.(others);
