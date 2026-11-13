@@ -19,6 +19,18 @@
         -webkit-mask: radial-gradient(circle, transparent 37.2vh, #000 37.4vh, #000 37.9vh, transparent 38vh); mask: radial-gradient(circle, transparent 37.2vh, #000 37.4vh, #000 37.9vh, transparent 38vh); }
       #scope .dot { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: #ff5a3a; box-shadow: 0 0 8px #ff5a3a; }
       #scope .read { position: absolute; left: 0; right: 0; top: calc(50% + 39.5vh); text-align: center; color: #e8edf2; font-size: 13px; letter-spacing: 0.08em; }
+      #controls { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(8,10,13,0.72); z-index: 2000; padding: 16px; }
+      #controls .box { width: min(560px, 100%); max-height: 100%; overflow: auto; background: #171a1f; color: #d7e0e8; border: 1px solid #2c323a; border-radius: 10px; padding: 20px 22px; font-size: 13px; }
+      #controls h2 { margin: 0 0 6px; font-size: 16px; }
+      #controls p { margin: 0 0 14px; color: #8f9aa6; line-height: 1.5; }
+      #controls .row { display: grid; grid-template-columns: minmax(0, 1fr) 130px 130px; gap: 8px; align-items: center; padding: 3px 0; }
+      #controls, #controls * { box-sizing: border-box; }
+      #controls button { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      @media (max-width: 700px) { #controls .row { grid-template-columns: minmax(0, 1fr) 84px 84px; gap: 6px; } #controls .box { padding: 16px; font-size: 12px; } }
+      #controls button { font: inherit; color: #d7e0e8; background: #242a32; border: 1px solid #353d47; border-radius: 6px; padding: 7px 8px; cursor: pointer; }
+      #controls button:hover { border-color: #5b6877; }
+      #controls button.wait { background: #3b2a16; border-color: #d98a2b; color: #ffd9a3; }
+      #controls .foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
       #help { position: fixed; left: 12px; bottom: 12px; right: 12px; color: #aab4be; font-size: 12px; line-height: 1.5; pointer-events: none; text-shadow: 0 1px 2px #000; }
     </style>
   </head>
@@ -26,7 +38,8 @@
     <canvas id="c"></canvas>
     <div id="scope"><div class="ring"></div><div class="dot"></div><div class="read"></div></div>
     <div id="hud"></div>
-    <div id="help">W/S or ↑/↓ drive · A/D or ←/→ turn · Z/X turret · Q/E gun up/down · C centre gun · Space fire · 4 speed boost · R reset upright · T back to start · V suspension rays · H driving meters</div>
+    <div id="controls"></div>
+    <div id="help"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

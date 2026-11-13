@@ -7,6 +7,7 @@ import { addCrates, addTargets, spawnPoint } from './sim/setup';
 import { View } from './render/view';
 import { NetClient } from './net/client';
 import { NET_PORT } from './net/protocol';
+import { Action, Controls } from './controls';
 
 const STORE = 'tank-sandbox-v15';
 const query = new URLSearchParams(location.search);
@@ -138,30 +139,31 @@ function swapLoadout() {
 }
 
 // --- controls ---
-const keys = new Set<string>();
-addEventListener('keydown', (e) => {
-  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
-  if (e.repeat) return;
-  keys.add(e.code);
+const helpEl = document.getElementById('help')!;
+const controls = new Controls(() => drawHelp());
+function drawHelp() {
+  const k = (a: Action) => controls.label(a);
+  helpEl.textContent = `${k('forward')} · ${k('back')} drive  ·  ${k('left')} · ${k('right')} turn  ·  ${k('turretLeft')} · ${k('turretRight')} turret  ·  ${k('gunUp')} · ${k('gunDown')} gun up/down  ·  ${k('centre')} centre  ·  ${k('fire')} fire  ·  ${k('boost')} boost  ·  Esc controls`;
+}
+drawHelp();
+controls.onPress((a) => {
   view.sound.unlock();
-  if (e.code === 'KeyR') { if (net) net.command('upright'); else player?.upright(); }
-  if (e.code === 'KeyT') { if (net) net.command('respawn'); else player?.place(SPAWN, SPAWN.yaw); resetMeters(); }
-  if (e.code === 'KeyV') view.showRays = !view.showRays;
-  if (e.code === 'KeyH') fullHud = !fullHud;
+  if (a === 'upright') { if (net) net.command('upright'); else player?.upright(); }
+  if (a === 'respawn') { if (net) net.command('respawn'); else player?.place(SPAWN, SPAWN.yaw); resetMeters(); }
+  if (a === 'rays') view.showRays = !view.showRays;
+  if (a === 'meters') fullHud = !fullHud;
 });
-addEventListener('keyup', (e) => keys.delete(e.code));
-addEventListener('blur', () => keys.clear());
 addEventListener('pointerdown', () => view.sound.unlock());
-const axis = (pos: string[], neg: string[]) => (pos.some((k) => keys.has(k)) ? 1 : 0) - (neg.some((k) => keys.has(k)) ? 1 : 0);
+addEventListener('keydown', () => view.sound.unlock());
 function readInput(): TankInput {
   return {
-    throttle: axis(['KeyW', 'ArrowUp'], ['KeyS', 'ArrowDown']),
-    steer: axis(['KeyA', 'ArrowLeft'], ['KeyD', 'ArrowRight']),
-    turret: axis(['KeyZ', 'Comma'], ['KeyX', 'Period']),
-    pitch: axis(['KeyQ', 'PageUp'], ['KeyE', 'PageDown']),
-    center: keys.has('KeyC') || keys.has('Slash'),
-    fire: keys.has('Space'),
-    boost: keys.has('Digit4') || keys.has('Numpad4'),
+    throttle: controls.axis('forward', 'back'),
+    steer: controls.axis('left', 'right'),
+    turret: controls.axis('turretLeft', 'turretRight'),
+    pitch: controls.axis('gunUp', 'gunDown'),
+    center: controls.held('centre'),
+    fire: controls.held('fire'),
+    boost: controls.held('boost'),
   };
 }
 
@@ -361,6 +363,7 @@ cam.close();
 if (online) { susp.close(); gun.close(); boost.close(); hit.close(); }
 gui.onChange(save);
 if (innerWidth < 700) gui.close();
+gui.add({ go: () => controls.toggle(true) }, 'go').name('Controls… (Esc)');
 gui.add({ go: resetTargets }, 'go').name('Reset target tanks');
 gui.add({ go: () => { navigator.clipboard?.writeText(JSON.stringify({ sim: sim.params, hulls, guns }, null, 2)); } }, 'go').name('Copy settings as JSON');
 gui.add({
