@@ -1,9 +1,9 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { SimWorld, STEP } from '../src/sim/world';
 import { HULLS, HullParams } from '../src/sim/params';
-import { TankInput, ShotEvent, noInput, Tank } from '../src/sim/tank';
+import { TankInput, ShotEvent, KillEvent, noInput, Tank } from '../src/sim/tank';
 import { addCrates, addTargets, spawnPoint } from '../src/sim/setup';
-import { ClientMsg, ServerMsg, NET_PORT, SNAP_EVERY, cleanInput } from '../src/net/protocol';
+import { ClientMsg, ServerMsg, ScoreRow, NET_PORT, SNAP_EVERY, cleanInput } from '../src/net/protocol';
 
 interface Client {
   ws: WebSocket;
@@ -12,6 +12,9 @@ interface Client {
   ack: number;
   last: TankInput;
   slot: number;
+  name: string;
+  k: number;
+  d: number;
 }
 
 const sim = await SimWorld.create();
@@ -22,6 +25,8 @@ addCrates(sim);
 const clients = new Map<WebSocket, Client>();
 let tick = 0;
 let shots: ShotEvent[] = [];
+let kills: KillEvent[] = [];
+const cleanName = (n: unknown, id: number) => (typeof n === 'string' && n.trim() ? n.trim().slice(0, 16) : `Player ${id}`);
 const send = (ws: WebSocket, m: ServerMsg) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m)); };
 const freeSlot = () => { const used = new Set([...clients.values()].map((c) => c.slot)); let n = 0; while (used.has(n)) n++; return n; };
 
@@ -35,7 +40,7 @@ wss.on('connection', (ws) => {
       if (c) return;
       const slot = freeSlot();
       const tank = sim.addTank(hulls[m.hull] ?? hulls.Dart, spawnPoint(slot), 0);
-      clients.set(ws, { ws, tank, queue: [], ack: 0, last: noInput(), slot });
+      clients.set(ws, { ws, tank, queue: [], ack: 0, last: noInput(), slot, name: cleanName(m.name, tank.id), k: 0, d: 0 });
       send(ws, { t: 'welcome', id: tank.id, sim: sim.params, hulls });
       console.log(`+ player ${tank.id} (${tank.hull.name}), ${clients.size} online`);
       return;
@@ -46,8 +51,8 @@ wss.on('connection', (ws) => {
     } else if (m.t === 'ping') {
       send(ws, { t: 'pong', c: m.c });
     } else if (m.t === 'cmd') {
-      if (m.c === 'upright') c.tank.upright();
-      if (m.c === 'respawn') c.tank.place(spawnPoint(c.slot), 0);
+      if (m.c === 'upright' && c.tank.dead <= 0) c.tank.upright();
+      if (m.c === 'respawn' && c.tank.dead <= 0) c.tank.place(spawnPoint(c.slot), 0);
       if (m.c === 'targets') {
         for (const t of targets) sim.removeTank(t);
         targets = addTargets(sim, hulls);
@@ -58,6 +63,8 @@ wss.on('connection', (ws) => {
       const id = c.tank.id;
       sim.removeTank(c.tank);
       c.tank = sim.addTank(hulls[m.hull], { x: p.x, y: p.y + 0.6, z: p.z }, 0, id);
+      c.tank.home = spawnPoint(c.slot);
+      c.tank.homeYaw = 0;
     } else if (m.t === 'tune') {
       // Sandbox convenience: anyone connected can retune the shared world.
       for (const [k, v] of Object.entries(m.sim ?? {})) if (k in sim.params && typeof v === typeof (sim.params as any)[k]) (sim.params as any)[k] = v;
@@ -90,13 +97,23 @@ function step() {
   sim.step();
   shots.push(...sim.shots);
   sim.shots.length = 0;
+  for (const k of sim.kills) {
+    for (const c of clients.values()) {
+      if (c.tank.id === k.by && k.by !== k.victim) c.k++;
+      if (c.tank.id === k.victim) c.d++;
+    }
+  }
+  kills.push(...sim.kills);
+  sim.kills.length = 0;
   tick++;
   if (tick % SNAP_EVERY === 0 && clients.size > 0) {
     const world = sim.capture();
+    const score: ScoreRow[] = [...clients.values()].map((c) => ({ id: c.tank.id, name: c.name, k: c.k, d: c.d }));
     for (const c of clients.values()) {
-      send(c.ws, { t: 'snap', tick, ack: c.ack, players: clients.size, shots, ...world });
+      send(c.ws, { t: 'snap', tick, ack: c.ack, players: clients.size, shots, kills, score, ...world });
     }
     shots = [];
+    kills = [];
   }
 }
 

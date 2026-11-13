@@ -55,6 +55,12 @@ interface TankView {
   offPos: THREE.Vector3; // leftover from the last network correction, fades out
   offQuat: THREE.Quaternion;
   shown: { pos: THREE.Vector3; quat: THREE.Quaternion } | null;
+  paint: THREE.MeshStandardMaterial;
+  color: number;
+  bar: THREE.Sprite;
+  barCanvas: HTMLCanvasElement;
+  barKey: string;
+  name: string;
 }
 
 export class View {
@@ -132,7 +138,7 @@ export class View {
     this.camera.updateProjectionMatrix();
   }
 
-  addTank(tank: Tank, color: number) {
+  addTank(tank: Tank, color: number, name = '') {
     const h = tank.hull;
     const group = new THREE.Group();
     const paint = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.15 });
@@ -157,13 +163,20 @@ export class View {
     group.add(turret);
     group.traverse((o) => { o.castShadow = true; });
     this.scene.add(group);
-    this.tanks.push({ tank, group, turret, offPos: new THREE.Vector3(), offQuat: new THREE.Quaternion(), shown: null });
+    const barCanvas = document.createElement('canvas');
+    barCanvas.width = 256; barCanvas.height = 64;
+    const bar = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(barCanvas), depthTest: false, transparent: true }));
+    bar.scale.set(3.2, 0.8, 1);
+    bar.renderOrder = 998;
+    this.scene.add(bar);
+    this.tanks.push({ tank, group, turret, offPos: new THREE.Vector3(), offQuat: new THREE.Quaternion(), shown: null, paint, color, bar, barCanvas, barKey: '', name });
   }
 
   removeTank(tank: Tank) {
     const i = this.tanks.findIndex((t) => t.tank === tank);
     if (i < 0) return;
     this.scene.remove(this.tanks[i].group);
+    this.scene.remove(this.tanks[i].bar);
     this.tanks.splice(i, 1);
   }
 
@@ -175,6 +188,49 @@ export class View {
     mesh.castShadow = mesh.receiveShadow = true;
     this.scene.add(mesh);
     this.crates.push({ crate, mesh });
+  }
+
+  setName(tank: Tank, name: string) {
+    const tv = this.tanks.find((t) => t.tank === tank);
+    if (tv) tv.name = name;
+  }
+
+  explode(at: { x: number; y: number; z: number }) {
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 16, 12),
+      new THREE.MeshBasicMaterial({ color: 0xffa23a, transparent: true, opacity: 0.9 }),
+    );
+    mesh.position.set(at.x, at.y + 0.5, at.z);
+    this.scene.add(mesh);
+    this.blasts.push({ mesh, life: 0.6 });
+  }
+
+  private blasts: { mesh: THREE.Mesh; life: number }[] = [];
+
+  private drawBar(tv: TankView) {
+    const t = tv.tank;
+    const frac = Math.max(0, t.hp / t.hull.hp);
+    const key = `${tv.name}|${frac.toFixed(2)}|${t.dead > 0}`;
+    if (key === tv.barKey) return;
+    tv.barKey = key;
+    const g = tv.barCanvas.getContext('2d')!;
+    g.clearRect(0, 0, 256, 64);
+    if (tv.name) {
+      g.font = '600 24px ui-monospace, Menlo, monospace';
+      g.textAlign = 'center';
+      g.lineWidth = 5;
+      g.strokeStyle = 'rgba(0,0,0,0.8)';
+      g.strokeText(tv.name, 128, 26);
+      g.fillStyle = '#fff';
+      g.fillText(tv.name, 128, 26);
+    }
+    if (t.dead <= 0) {
+      g.fillStyle = 'rgba(0,0,0,0.65)';
+      g.fillRect(48, 40, 160, 14);
+      g.fillStyle = frac > 0.5 ? '#58d26b' : frac > 0.25 ? '#e8c14a' : '#e25a4a';
+      g.fillRect(50, 42, 156 * frac, 10);
+    }
+    (tv.bar.material.map as THREE.CanvasTexture).needsUpdate = true;
   }
 
   // Network corrections: remember where every tank is drawn, then turn the jump
@@ -232,6 +288,21 @@ export class View {
       tv.group.position.add(tv.offPos);
       tv.group.quaternion.premultiply(tv.offQuat);
       tv.turret.rotation.y = t.prevTurret + (t.turretYaw - t.prevTurret) * alpha;
+      // Wrecks go dark; a freshly respawned tank is see-through while protected.
+      tv.paint.color.setHex(t.dead > 0 ? 0x2b2b2b : tv.color);
+      tv.paint.transparent = t.shield > 0;
+      tv.paint.opacity = t.shield > 0 ? 0.45 : 1;
+      this.drawBar(tv);
+      tv.bar.position.set(tv.group.position.x, tv.group.position.y + t.hull.halfH + 2.1, tv.group.position.z);
+      tv.bar.visible = t !== follow; // your own health is in the HUD
+    }
+    for (let i = this.blasts.length - 1; i >= 0; i--) {
+      const bl = this.blasts[i];
+      bl.life -= dt;
+      const k = 1 - bl.life / 0.6;
+      bl.mesh.scale.setScalar(1 + k * 4);
+      (bl.mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.9 * (1 - k));
+      if (bl.life <= 0) { this.scene.remove(bl.mesh); this.blasts.splice(i, 1); }
     }
     for (const cv of this.crates) {
       const c = cv.crate;

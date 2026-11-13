@@ -1,7 +1,7 @@
 import type { HullParams } from '../sim/params';
-import type { ShotEvent, Tank, TankInput } from '../sim/tank';
+import type { KillEvent, ShotEvent, Tank, TankInput } from '../sim/tank';
 import type { Crate, SimWorld } from '../sim/world';
-import type { ClientMsg, ServerMsg } from './protocol';
+import type { ClientMsg, ScoreRow, ServerMsg } from './protocol';
 
 type Snap = Extract<ServerMsg, { t: 'snap' }>;
 
@@ -10,6 +10,7 @@ export interface NetHooks {
   onRemove?: (t: Tank) => void;
   onCrate?: (c: Crate) => void;
   onShots?: (s: ShotEvent[]) => void;
+  onKills?: (k: KillEvent[]) => void;
   onTune?: () => void;
   before?: () => void; // just before the world is rewound to a snapshot
   after?: () => void; // after it has been replayed back to now
@@ -26,6 +27,8 @@ export class NetClient {
   replaySteps = 0;
   correction = 0; // metres our own tank moved when the last snapshot was applied
   worstCorrection = 0;
+  score: ScoreRow[] = [];
+  private kills: KillEvent[] = [];
   private ws: WebSocket;
   private seq = 0;
   private pending: { seq: number; input: TankInput }[] = [];
@@ -38,9 +41,10 @@ export class NetClient {
     private hulls: Record<string, HullParams>,
     private hooks: NetHooks,
     hull: string,
+    name: string,
   ) {
     this.ws = new WebSocket(url);
-    this.ws.onopen = () => { this.connected = true; this.send({ t: 'hello', hull }); };
+    this.ws.onopen = () => { this.connected = true; this.send({ t: 'hello', hull, name }); };
     this.ws.onclose = () => { this.connected = false; };
     this.ws.onmessage = (e) => this.delayed(() => this.receive(JSON.parse(e.data as string)));
     setInterval(() => this.send({ t: 'ping', c: performance.now() }), 1000);
@@ -68,6 +72,7 @@ export class NetClient {
       this.ping = performance.now() - m.c;
     } else if (m.t === 'snap') {
       this.shots.push(...m.shots);
+      this.kills.push(...m.kills);
       if (!this.latest || m.tick > this.latest.tick) this.latest = m;
     }
   }
@@ -95,6 +100,9 @@ export class NetClient {
     const others = this.shots.filter((s) => s.by !== this.id);
     this.shots = [];
     if (others.length) this.hooks.onShots?.(others);
+    if (this.kills.length) this.hooks.onKills?.(this.kills);
+    this.kills = [];
+    this.score = snap.score;
 
     this.hooks.before?.();
     const was = this.me ? { ...this.me.body.translation() } : null;

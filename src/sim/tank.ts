@@ -25,6 +25,18 @@ export interface TankState {
   p: V3; q: Q; lv: V3; av: V3;
   ty: number; tv: number; cd: number; pe: number; bo: number;
   lx: number; lz: number; pu: boolean;
+  hp: number; de: number; iv: number; hm: V3; hy: number;
+}
+
+export interface KillEvent {
+  by: number;
+  victim: number;
+  at: V3;
+}
+
+export interface SimEvents {
+  shots: ShotEvent[];
+  kills: KillEvent[];
 }
 
 export interface RayState {
@@ -46,6 +58,11 @@ export class Tank {
   id = 0;
   bot = false;
   input: TankInput = noInput();
+  hp = 0;
+  dead = 0; // seconds until respawn, 0 = alive
+  shield = 0; // seconds of spawn protection left
+  home: V3 = v3();
+  homeYaw = 0;
   turretYaw = 0;
   turretVel = 0;
   rays: RayState[] = [];
@@ -88,6 +105,9 @@ export class Tank {
       .setFriction(0.25);
     world.createCollider(dome, this.body);
     this.body.userData = this;
+    this.hp = hull.hp;
+    this.home = { ...pos };
+    this.homeYaw = yawDeg;
     this.applyMass();
     this.snapshot();
   }
@@ -126,6 +146,7 @@ export class Tank {
       p: { ...b.translation() }, q: { ...b.rotation() }, lv: { ...b.linvel() }, av: { ...b.angvel() },
       ty: this.turretYaw, tv: this.turretVel, cd: this.cooldown, pe: this.pending, bo: this.boostLeft,
       lx: this.lastVx, lz: this.lastVz, pu: this.pushed,
+      hp: this.hp, de: this.dead, iv: this.shield, hm: { ...this.home }, hy: this.homeYaw,
     };
   }
 
@@ -137,6 +158,7 @@ export class Tank {
     b.setAngvel(s.av, true);
     this.turretYaw = s.ty; this.turretVel = s.tv; this.cooldown = s.cd; this.pending = s.pe; this.boostLeft = s.bo;
     this.lastVx = s.lx; this.lastVz = s.lz; this.pushed = s.pu;
+    this.hp = s.hp; this.dead = s.de; this.shield = s.iv; this.home = { ...s.hm }; this.homeYaw = s.hy;
     this.shotHit = false;
   }
 
@@ -162,8 +184,23 @@ export class Tank {
     return qMul(this.body.rotation(), qYaw(this.turretYaw));
   }
 
-  step(dt: number, input: TankInput, P: SimParams, shots: ShotEvent[]) {
+  step(dt: number, input: TankInput, P: SimParams, ev: SimEvents) {
     const b = this.body;
+    this.shield = Math.max(0, this.shield - dt);
+    if (this.dead > 0) {
+      // A wreck sits where it died, then the tank comes back at its home spot.
+      this.dead -= dt;
+      input = noInput();
+      if (this.dead <= 0) {
+        this.dead = 0;
+        this.place(this.home, this.homeYaw);
+        this.hp = this.hull.hp;
+        this.shield = P.spawnShield;
+        this.turretYaw = this.turretVel = 0;
+        this.boostLeft = 0;
+      }
+    }
+    const alive = this.dead <= 0;
     const h = this.hull;
     const m = h.mass;
     b.setAngularDamping(P.angularDamping);
@@ -313,20 +350,20 @@ export class Tank {
 
     // Gun
     this.cooldown -= dt;
-    if (input.fire && this.cooldown <= 0 && this.pending < 0) {
+    if (alive && input.fire && this.cooldown <= 0 && this.pending < 0) {
       this.pending = P.fireDelay;
       this.cooldown = P.reload + P.fireDelay;
     }
     if (this.pending >= 0) {
       this.pending -= dt;
-      if (this.pending < 0) this.shoot(P, shots);
+      if (this.pending < 0 && alive) this.shoot(P, ev);
     }
     const v1 = b.linvel();
     this.lastVx = v1.x;
     this.lastVz = v1.z;
   }
 
-  private shoot(P: SimParams, shots: ShotEvent[]) {
+  private shoot(P: SimParams, ev: SimEvents) {
     const b = this.body;
     const h = this.hull;
     const q = b.rotation();
@@ -363,11 +400,22 @@ export class Tank {
         const lift = dot(sub(end, oc), oUp);
         const at = sub(end, scale(oUp, lift * (1 - P.impactTilt)));
         other.applyImpulseAtPoint(scale(aim, P.impact), at, true);
-        if (other.userData instanceof Tank) other.userData.shotHit = true;
+        const victim = other.userData;
+        if (victim instanceof Tank) {
+          victim.shotHit = true;
+          if (victim.dead <= 0 && victim.shield <= 0) {
+            victim.hp -= P.damage;
+            if (victim.hp <= 0) {
+              victim.hp = 0;
+              victim.dead = P.respawnTime;
+              ev.kills.push({ by: this.id, victim: victim.id, at: { ...other.translation() } });
+            }
+          }
+        }
         struck = true;
       }
     }
     b.applyImpulseAtPoint(scale(dir, -P.recoil), muzzle, true);
-    shots.push({ by: this.id, from: muzzle, to: end, hit: struck });
+    ev.shots.push({ by: this.id, from: muzzle, to: end, hit: struck });
   }
 }

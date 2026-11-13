@@ -7,7 +7,7 @@ import { View } from './render/view';
 import { NetClient } from './net/client';
 import { NET_PORT } from './net/protocol';
 
-const STORE = 'tank-sandbox-v9';
+const STORE = 'tank-sandbox-v10';
 const query = new URLSearchParams(location.search);
 const online = query.has('online');
 const COLORS = { me: 0x2f9e8f, player: 0x3a78c9, bot: 0xb5653a };
@@ -18,7 +18,19 @@ const hud = document.getElementById('hud')!;
 
 // Working copies so the sliders never touch the presets.
 const hulls: Record<string, HullParams> = Object.fromEntries(Object.entries(HULLS).map(([k, v]) => [k, { ...v }]));
-const state = { hull: 'Dart', lag: 0 };
+const state = { hull: 'Dart', lag: 0, name: '' };
+try { state.name = localStorage.getItem('tank-name') ?? ''; } catch { /* ignore */ }
+if (query.get('name')) state.name = query.get('name')!;
+let feed = '';
+let feedUntil = 0;
+const nameOf = (id: number) => net?.score.find((r) => r.id === id)?.name ?? (sim.tanks.find((t) => t.id === id)?.bot ? 'target' : `tank ${id}`);
+function onKills(kills: { by: number; victim: number; at: { x: number; y: number; z: number } }[]) {
+  for (const k of kills) {
+    view.explode(k.at);
+    feed = `${nameOf(k.by)} destroyed ${nameOf(k.victim)}`;
+    feedUntil = performance.now() + 4000;
+  }
+}
 if (!online) {
   try {
     const saved = JSON.parse(localStorage.getItem(STORE) ?? 'null');
@@ -54,10 +66,11 @@ if (online) {
     onRemove: (t) => { view.removeTank(t); if (t === player) player = null; },
     onCrate: (c) => view.addCrate(c),
     onShots: (s) => view.showShots(s),
+    onKills,
     onTune: () => gui.controllersRecursive().forEach((c) => c.updateDisplay()),
     before: () => view.beginCorrection(),
     after: () => view.endCorrection(),
-  }, state.hull);
+  }, state.hull, state.name);
 } else {
   player = sim.addTank(hulls[state.hull], SPAWN, 0);
   view.addTank(player, COLORS.me);
@@ -150,6 +163,10 @@ function drawHud() {
         `replay ${net.replaySteps} ticks · fix ${f(net.correction * 100, 1)} cm (worst ${f(net.worstCorrection * 100, 0)})\n`
       : `OFFLINE – no server on port ${NET_PORT} (npm run server)\n`;
   }
+  if (net && net.score.length) {
+    netLine += [...net.score].sort((a, b) => b.k - a.k).map((r) => `${r.id === net!.id ? '›' : ' '} ${r.name.padEnd(16)} ${String(r.k).padStart(2)} / ${r.d}`).join('\n') + '\n';
+  }
+  if (performance.now() < feedUntil) netLine += `✹ ${feed}\n`;
   if (!player) { hud.textContent = netLine + 'waiting for a tank…'; return; }
   const q = player.body.rotation();
   const pitch = Math.asin(Math.max(-1, Math.min(1, 2 * (q.w * q.x - q.y * q.z)))) * 57.2958;
@@ -157,7 +174,7 @@ function drawHud() {
   const p = player.body.translation();
   hud.textContent =
     netLine +
-    `${player.hull.name}   mass ${player.hull.mass} kg\n` +
+    `${player.hull.name}   ${player.dead > 0 ? `DESTROYED – back in ${player.dead.toFixed(1)} s` : `HP ${Math.ceil(player.hp)} / ${player.hull.hp}`}${player.shield > 0 ? '   shielded' : ''}\n` +
     `speed    ${f(player.forwardSpeed, 2)} m/s   (top ${player.hull.topSpeed})${player.boostLeft > 0 ? `   BOOST ${player.boostLeft.toFixed(0)} s` : ''}\n` +
     `side     ${f(player.sideSpeed, 2)} m/s\n` +
     `yaw rate ${f(player.yawRate, 0)} °/s\n` +
@@ -175,6 +192,7 @@ function drawHud() {
 const gui = new GUI({ title: online ? 'Tuning (shared with server)' : 'Tuning', width: 300 });
 gui.add(state, 'hull', Object.keys(hulls)).name('Hull').onChange(swapHull).listen();
 if (online) {
+  gui.add(state, 'name').name('Name (reload to apply)').onFinishChange((v: string) => { try { localStorage.setItem('tank-name', v); } catch { /* ignore */ } });
   gui.add(state, 'lag', 0, 300, 5).name('Fake lag, ms each way').onChange((v: number) => { if (net) net.lagMs = v; });
 }
 let hullFolder: GUI | null = null;
@@ -195,6 +213,7 @@ function buildHullFolder() {
   fo.add(h, 'mass', 500, 8000, 50).name('Mass kg').onChange(remass);
   fo.add(h, 'comY', -0.5, 0.5, 0.01).name('Centre of mass height').onChange(remass);
   fo.add(h, 'stability', 0.5, 8, 0.1).name('Tip resistance ×').onChange(remass);
+  fo.add(h, 'hp', 20, 1000, 10).name('Health');
   fo.onChange(save);
   if (online) fo.close();
 }
@@ -221,6 +240,9 @@ gun.add(P, 'recoil', 0, 40000, 100).name('Recoil on shooter N·s');
 gun.add(P, 'impactTilt', 0, 1, 0.05).name('Hit rocks the target (0–1)');
 gun.add(P, 'autoAimUp', 0, 25, 1).name('Auto-aim up °');
 gun.add(P, 'autoAimDown', 0, 25, 1).name('Auto-aim down °');
+gun.add(P, 'damage', 0, 400, 5).name('Damage per hit');
+gun.add(P, 'respawnTime', 0.5, 15, 0.5).name('Respawn after s');
+gun.add(P, 'spawnShield', 0, 10, 0.5).name('Spawn protection s');
 gun.add(P, 'fireDelay', 0, 2, 0.05).name('Delay before shot s');
 gun.add(P, 'reload', 0.1, 8, 0.1).name('Reload s');
 const boost = gui.addFolder('Speed boost (key 4)');
@@ -271,6 +293,7 @@ function frame(now: number) {
         // Other players' shots arrive from the server; only ours are shown from the prediction.
         const mine = sim.shots.filter((s) => s.by === net!.id);
         sim.shots.length = 0;
+        sim.kills.length = 0; // kills are announced by the server
         view.showShots(mine);
       }
     } else {
@@ -282,6 +305,8 @@ function frame(now: number) {
     steps++;
   }
   if (steps === 5) acc = 0;
+  if (sim.kills.length) { onKills(sim.kills); sim.kills.length = 0; }
+  if (net) for (const r of net.score) { const t = sim.tanks.find((x) => x.id === r.id); if (t) view.setName(t, r.id === net.id ? '' : r.name); }
   view.drainShots();
   view.render(acc / STEP, dt, player);
   drawHud();

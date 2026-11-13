@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { buildLevel, Box } from './level';
 import { HullParams, SimParams, defaultSim } from './params';
-import { Tank, TankInput, TankState, ShotEvent, noInput } from './tank';
+import { Tank, TankInput, TankState, ShotEvent, KillEvent, noInput } from './tank';
 import { V3, qMul, qYaw, qPitch, DEG } from './vec';
 
 export const STEP = 1 / 60;
@@ -26,6 +26,7 @@ export class SimWorld {
   tanks: Tank[] = [];
   crates: Crate[] = [];
   shots: ShotEvent[] = [];
+  kills: KillEvent[] = [];
   time = 0;
 
   static async create(): Promise<SimWorld> {
@@ -79,10 +80,10 @@ export class SimWorld {
       c.prevPos = { ...c.body.translation() };
       c.prevRot = { ...c.body.rotation() };
     }
-    const shots = quiet ? [] : this.shots;
+    const ev = quiet ? { shots: [], kills: [] } : { shots: this.shots, kills: this.kills };
     this.tanks.forEach((t, i) => {
       if (inputs) t.input = inputs[i] ?? noInput();
-      t.step(STEP, t.input, this.params, shots);
+      t.step(STEP, t.input, this.params, ev);
     });
     this.world.step();
     this.time += STEP;

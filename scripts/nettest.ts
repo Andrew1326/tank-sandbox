@@ -9,7 +9,7 @@ import { NET_PORT } from '../src/net/protocol';
 const lag = Number(process.argv[2] ?? 0);
 const sim = await SimWorld.create();
 const hulls = Object.fromEntries(Object.entries(HULLS).map(([k, v]) => [k, { ...v }]));
-const net = new NetClient(`ws://localhost:${NET_PORT}`, sim, hulls, {}, 'Dart');
+const net = new NetClient(`ws://localhost:${NET_PORT}`, sim, hulls, {}, 'Dart', 'Script');
 net.lagMs = lag;
 
 const plan: [number, object][] = [

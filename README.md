@@ -17,6 +17,8 @@ Grey-box driving range for tuning tank handling in the browser.
 
 The server runs the same `src/sim` code at 60 Hz and sends a snapshot every second tick. Each client runs the simulation ahead of the server: keys apply immediately, and every snapshot rewinds the local world and replays the inputs the server has not processed yet. Corrections are drawn as a fading offset. The "Fake lag" slider delays traffic both ways to test the feel on a bad connection; `npx tsx scripts/nettest.ts 80` measures prediction error headlessly against a running server.
 
+Tanks have health; a destroyed tank sits as a wreck, then returns to its spawn with a short shield. The server keeps the score. `npx tsx scripts/combat.ts` checks damage and respawn headlessly.
+
 Tuning sliders in online mode change the server's numbers for everyone connected.
 
 Add `?shot` to the URL when taking automated screenshots.
