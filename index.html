@@ -8,14 +8,14 @@
       html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1e22; font-family: ui-monospace, Menlo, Consolas, monospace; }
       canvas { display: block; width: 100%; height: 100%; }
       #hud { position: fixed; left: 12px; top: 12px; padding: 10px 12px; background: rgba(15, 17, 20, 0.72); color: #d7e0e8; font-size: 12px; line-height: 1.55; white-space: pre; border-radius: 6px; pointer-events: none; }
-      @media (max-width: 700px) { #hud { top: 40px; font-size: 11px; } }
+      @media (max-width: 700px) { #hud { top: 40px; font-size: 10px; max-width: calc(100vw - 48px); overflow: hidden; } #help { display: none; } }
       #help { position: fixed; left: 12px; bottom: 12px; right: 12px; color: #aab4be; font-size: 12px; line-height: 1.5; pointer-events: none; text-shadow: 0 1px 2px #000; }
     </style>
   </head>
   <body>
     <canvas id="c"></canvas>
     <div id="hud"></div>
-    <div id="help">W/S or ↑/↓ drive · A/D or ←/→ turn · Z/X turret · C centre turret · Space fire · 4 speed boost · R reset upright · T back to start · V suspension rays</div>
+    <div id="help">W/S or ↑/↓ drive · A/D or ←/→ turn · Z/X turret · C centre turret · Space fire · 4 speed boost · R reset upright · T back to start · V suspension rays · H driving meters</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

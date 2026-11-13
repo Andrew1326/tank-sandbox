@@ -141,7 +141,7 @@ const timer = setInterval(() => {
       const me = bot.net.me;
       if (me) me.input = input;
       bot.sim.step();
-      for (const s of bot.sim.shots) if (s.by === bot.net.id) { bot.shots++; if (s.hit) bot.hits++; }
+      for (const s of bot.sim.shots) if (s.by === bot.net.id && s.k === 0) { bot.shots++; if (s.hit) bot.hits++; }
       bot.sim.shots.length = 0;
       bot.sim.kills.length = 0;
       if (me) {

@@ -16,6 +16,7 @@ export const noInput = (): TankInput => ({ throttle: 0, steer: 0, turret: 0, cen
 export interface ShotEvent {
   by: number;
   gun: string;
+  k: 0 | 1 | 2; // 0 = shot with a visible path, 1 = muzzle only (a bolt leaving), 2 = impact only (a bolt landing)
   from: V3;
   to: V3;
   hit: boolean;
@@ -453,6 +454,7 @@ export class Tank {
     b.applyImpulseAtPoint(scale(dir, -g.recoil), muzzle, true);
     if (g.kind === 'projectile') {
       ev.spawn.push({ by: this.id, team: this.team, gun: g.name, p: pivot, v: scale(aim, g.projSpeed), life: g.range / g.projSpeed });
+      ev.shots.push({ by: this.id, gun: g.name, k: 1, from: muzzle, to: muzzle, hit: false });
       return;
     }
     let end = add(pivot, scale(aim, g.range));
@@ -462,6 +464,6 @@ export class Tank {
       const other = hit.collider.parent();
       if (other) struck = applyHit(P, g, this.id, this.team, aim, end, other, ev);
     }
-    ev.shots.push({ by: this.id, gun: g.name, from: muzzle, to: end, hit: struck });
+    ev.shots.push({ by: this.id, gun: g.name, k: 0, from: muzzle, to: end, hit: struck });
   }
 }

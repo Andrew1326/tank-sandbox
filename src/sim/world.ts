@@ -133,7 +133,9 @@ export class SimWorld {
       if (hit) {
         const body = hit.collider.parent();
         const gun = this.guns[s.gun];
-        if (body && gun) applyHit(this.params, gun, s.by, s.team, dir, add(s.p, scale(dir, hit.timeOfImpact)), body, ev);
+        const at = add(s.p, scale(dir, hit.timeOfImpact));
+        const struck = body && gun ? applyHit(this.params, gun, s.by, s.team, dir, at, body, ev) : false;
+        ev.shots.push({ by: s.by, gun: s.gun, k: 2, from: at, to: at, hit: struck });
         continue;
       }
       s.p = add(s.p, scale(s.v, STEP));

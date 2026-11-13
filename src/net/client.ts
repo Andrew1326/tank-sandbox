@@ -108,7 +108,7 @@ export class NetClient {
     const snap = this.latest;
     if (!snap || !this.id) return;
     this.latest = null;
-    for (const s of this.shots) if (s.by === this.id) { this.serverShots++; if (s.hit) this.serverHits++; }
+    for (const s of this.shots) if (s.by === this.id && s.k === 0) { this.serverShots++; if (s.hit) this.serverHits++; }
     const others = this.shots.filter((s) => s.by !== this.id);
     this.shots = [];
     if (others.length) this.hooks.onShots?.(others);

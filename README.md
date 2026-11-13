@@ -23,6 +23,8 @@ Maps live in `src/sim/level.ts`: `range` (the tuning ground, default offline) an
 
 Guns are `Slug` (single shot), `Lance` (charged beam) and `Pulse` (stream of bolts); pick hull and gun in the panel. On a map with bases the server runs capture the flag with two teams, Amber and Azure. `npx tsx scripts/guns.ts` and `npx tsx scripts/ctf.ts` check weapons and flag rules; `?showcase` lines up every hull and gun to look at the models (`src/render/models.ts`).
 
+All art and sound is generated in code: `src/render/textures.ts` draws the surfaces, camouflage and sky, `src/render/fx.ts` runs smoke, dust, fire, debris and ground marks from fixed pools, `src/render/audio.ts` synthesises the engine, guns and explosions.
+
 Tuning sliders in online mode change the server's numbers for everyone connected.
 
 Add `?shot` to the URL when taking automated screenshots.

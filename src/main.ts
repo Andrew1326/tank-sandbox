@@ -38,6 +38,8 @@ function onKills(kills: { by: number; victim: number; at: { x: number; y: number
 }
 function onFlags(events: { what: string; team: number; by: number }[]) {
   for (const e of events) {
+    const ours = player?.team === e.team;
+    view.sound.jingle(e.what === 'captured' ? (ours ? 'bad' : 'good') : e.what === 'taken' ? (ours ? 'bad' : 'neutral') : 'neutral');
     const flag = `the ${TEAM_NAMES[e.team]} flag`;
     feed = e.what === 'taken' ? `${nameOf(e.by)} took ${flag}`
       : e.what === 'captured' ? `${nameOf(e.by)} captured ${flag}!`
@@ -141,12 +143,15 @@ addEventListener('keydown', (e) => {
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
   if (e.repeat) return;
   keys.add(e.code);
+  view.sound.unlock();
   if (e.code === 'KeyR') { if (net) net.command('upright'); else player?.upright(); }
   if (e.code === 'KeyT') { if (net) net.command('respawn'); else player?.place(SPAWN, SPAWN.yaw); resetMeters(); }
   if (e.code === 'KeyV') view.showRays = !view.showRays;
+  if (e.code === 'KeyH') fullHud = !fullHud;
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
+addEventListener('pointerdown', () => view.sound.unlock());
 const axis = (pos: string[], neg: string[]) => (pos.some((k) => keys.has(k)) ? 1 : 0) - (neg.some((k) => keys.has(k)) ? 1 : 0);
 function readInput(): TankInput {
   return {
@@ -160,6 +165,7 @@ function readInput(): TankInput {
 }
 
 // --- meters ---
+let fullHud = !online && innerWidth >= 700; // the driving meters; H toggles
 const meter = { accelT: NaN, stopT: NaN, stopD: NaN, airT: NaN, peakYaw: 0, peakSpeed: 0 };
 let accelStart = -1, stopStart = -1, stopFrom = 0, airStart = -1, lastThrottle = 0, odo = 0, clock = 0;
 function resetMeters() {
@@ -196,7 +202,7 @@ function drawHud() {
   if (net) {
     netLine = net.connected
       ? `ONLINE  ${net.players} player${net.players === 1 ? '' : 's'} · ping ${f(net.ping, 0)} ms\n` +
-        `replay ${net.replaySteps} ticks · fix ${f(net.correction * 100, 1)} cm (worst ${f(net.worstCorrection * 100, 0)})\n`
+        (fullHud ? `replay ${net.replaySteps} ticks · fix ${f(net.correction * 100, 1)} cm (worst ${f(net.worstCorrection * 100, 0)})\n` : '')
       : `OFFLINE – no server on port ${NET_PORT} (npm run server)\n`;
   }
   if (sim.teamPlay) {
@@ -215,7 +221,8 @@ function drawHud() {
   const p = player.body.translation();
   hud.textContent =
     netLine +
-    `${player.hull.name} + ${player.gun.name}   ${player.dead > 0 ? `DESTROYED – back in ${player.dead.toFixed(1)} s` : `HP ${Math.ceil(player.hp)} / ${player.hull.hp}`}${player.shield > 0 ? '   shielded' : ''}\n` +
+    `${player.hull.name} + ${player.gun.name}   ${player.dead > 0 ? `DESTROYED – back in ${player.dead.toFixed(1)} s` : `HP ${Math.ceil(player.hp)} / ${player.hull.hp}`}${player.shield > 0 ? '   shielded' : ''}${player.boostLeft > 0 && !fullHud ? `   BOOST ${player.boostLeft.toFixed(0)} s` : ''}\n` +
+    (!fullHud ? '' :
     `speed    ${f(player.forwardSpeed, 2)} m/s   (top ${player.hull.topSpeed})${player.boostLeft > 0 ? `   BOOST ${player.boostLeft.toFixed(0)} s` : ''}\n` +
     `side     ${f(player.sideSpeed, 2)} m/s\n` +
     `yaw rate ${f(player.yawRate, 0)} °/s\n` +
@@ -226,7 +233,7 @@ function drawHud() {
     `0 → 95 % top   ${f(meter.accelT, 2, ' s')}\n` +
     `coast to stop  ${f(meter.stopT, 2, ' s')}  ${f(meter.stopD, 1, ' m')}\n` +
     `last air time  ${f(meter.airT, 2, ' s')}\n` +
-    `peak speed ${f(meter.peakSpeed, 2)}  peak yaw ${f(meter.peakYaw, 0)}`;
+    `peak speed ${f(meter.peakSpeed, 2)}  peak yaw ${f(meter.peakYaw, 0)}`);
 }
 
 // --- tuning panel ---
@@ -314,6 +321,8 @@ const cam = gui.addFolder('Camera');
 cam.add(view, 'camDist', 4, 25, 0.5).name('Distance');
 cam.add(view, 'camHeight', 1, 20, 0.5).name('Height');
 cam.add(view, 'showRays').name('Show suspension').listen();
+cam.add(view, 'effects').name('Smoke, dust and sparks');
+cam.add(view.sound, 'volume', 0, 1, 0.05).name('Sound volume').onChange((v: number) => view.sound.setVolume(v));
 cam.close();
 if (online) { susp.close(); gun.close(); boost.close(); hit.close(); }
 gui.onChange(save);
@@ -363,6 +372,7 @@ function frame(now: number) {
   }
   if (steps === 5) acc = 0;
   if (sim.kills.length) { onKills(sim.kills); sim.kills.length = 0; }
+  if (sim.flagEvents.length) { if (!net) onFlags(sim.flagEvents); sim.flagEvents.length = 0; }
   if (net) for (const r of net.score) { const t = sim.tanks.find((x) => x.id === r.id); if (t) view.setName(t, r.id === net.id ? '' : r.name); }
   view.drainShots();
   view.render(acc / STEP, dt, player);
