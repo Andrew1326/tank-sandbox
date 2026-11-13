@@ -129,7 +129,7 @@ export class SimWorld {
     for (const t of this.tanks) {
       if (!t.streaming) continue;
       const g = t.gun;
-      const q = t.turretRotation();
+      const q = t.aimRotation();
       const dir = rotate(q, { x: 0, y: 0, z: -1 });
       const from = add(t.body.translation(), scale(rotate(t.body.rotation(), { x: 0, y: 1, z: 0 }), t.hull.halfH + 0.3));
       for (const o of this.tanks) {

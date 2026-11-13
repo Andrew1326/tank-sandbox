@@ -66,6 +66,9 @@ export interface SimParams {
   coldFade: number;
   freezeSlow: number; // share of speed lost when fully frozen
   flagReturn: number; // seconds a dropped flag waits before going home
+  pitchUp: number; // how far the gun can be raised, degrees
+  pitchDown: number;
+  pitchSpeed: number; // degrees per second
   autoAimUp: number;
   autoAimDown: number;
   boostSpeed: number;
@@ -131,8 +134,11 @@ export const defaultSim = (): SimParams => ({
   coldFade: 0.18,
   freezeSlow: 0.75,
   flagReturn: 20,
-  autoAimUp: 8,
-  autoAimDown: 10,
+  pitchUp: 22,
+  pitchDown: 10,
+  pitchSpeed: 40,
+  autoAimUp: 3,
+  autoAimDown: 3,
   boostSpeed: 1.4,
   boostAccel: 1.4,
   boostTime: 30,

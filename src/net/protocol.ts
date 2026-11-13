@@ -23,5 +23,5 @@ export interface ScoreRow { id: number; name: string; team: number; k: number; d
 
 export function cleanInput(i: Partial<TankInput> | undefined): TankInput {
   const axis = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? Math.max(-1, Math.min(1, x)) : 0);
-  return { throttle: axis(i?.throttle), steer: axis(i?.steer), turret: axis(i?.turret), center: !!i?.center, fire: !!i?.fire, boost: !!i?.boost };
+  return { throttle: axis(i?.throttle), steer: axis(i?.steer), turret: axis(i?.turret), pitch: axis(i?.pitch), center: !!i?.center, fire: !!i?.fire, boost: !!i?.boost };
 }

@@ -139,10 +139,15 @@ export function buildHull(h: HullParams, m: TankMats): { group: THREE.Group; lef
 
 // Turret group origin sits on the hull roof at the turret ring; -z is the muzzle direction.
 // reach = distance from the ring to the muzzle, matched to where the simulation fires from.
-export function buildTurret(gun: string, size: number, reach: number, m: TankMats): { group: THREE.Group; barrel: THREE.Group; muzzle: THREE.Object3D; charge: THREE.Mesh | null } {
+export function buildTurret(gun: string, size: number, reach: number, m: TankMats): { group: THREE.Group; tilt: THREE.Group; barrel: THREE.Group; muzzle: THREE.Object3D; charge: THREE.Mesh | null } {
   const g = new THREE.Group();
-  const barrel = new THREE.Group(); // slides back on firing
-  g.add(barrel);
+  // The gun elevates about its trunnion; inside that, the barrel slides back on firing.
+  const tilt = new THREE.Group();
+  tilt.position.set(0, 0.28, -size * 0.35);
+  g.add(tilt);
+  const barrel = new THREE.Group();
+  barrel.position.set(0, -0.28, size * 0.35);
+  tilt.add(barrel);
   const s = size;
   const muzzle = new THREE.Object3D();
   let charge: THREE.Mesh | null = null;
@@ -165,7 +170,7 @@ export function buildTurret(gun: string, size: number, reach: number, m: TankMat
     charge = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff5a3a, transparent: true, opacity: 0.9 }));
     charge.position.set(0, 0.26, -reach);
     charge.visible = false;
-    g.add(charge);
+    barrel.add(charge);
     muzzle.position.set(0, 0.26, -reach);
   } else if (gun === 'Ember') {
     // Squat housing between two fuel bottles, feeding a flared nozzle with a pilot light.
@@ -205,7 +210,7 @@ export function buildTurret(gun: string, size: number, reach: number, m: TankMat
     charge = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 8), new THREE.MeshBasicMaterial({ color: 0x9be8ff, transparent: true, opacity: 0.9 }));
     charge.position.set(0, 0.3, -reach);
     charge.visible = false;
-    g.add(charge);
+    barrel.add(charge);
     muzzle.position.set(0, 0.3, -reach);
   } else if (gun === 'Pulse') {
     // Wide flat housing, two short barrels side by side with lit tips, vents on top.
@@ -230,6 +235,6 @@ export function buildTurret(gun: string, size: number, reach: number, m: TankMat
     g.add(hatch);
     muzzle.position.set(0, 0.3, -reach);
   }
-  g.add(muzzle);
-  return { group: g, barrel, muzzle, charge };
+  barrel.add(muzzle);
+  return { group: g, tilt, barrel, muzzle, charge };
 }

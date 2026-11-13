@@ -8,7 +8,7 @@ import { View } from './render/view';
 import { NetClient } from './net/client';
 import { NET_PORT } from './net/protocol';
 
-const STORE = 'tank-sandbox-v14';
+const STORE = 'tank-sandbox-v15';
 const query = new URLSearchParams(location.search);
 const online = query.has('online');
 const COLORS = { me: 0x2f9e8f, player: 0x3a78c9, bot: 0x8f7a5c };
@@ -158,6 +158,7 @@ function readInput(): TankInput {
     throttle: axis(['KeyW', 'ArrowUp'], ['KeyS', 'ArrowDown']),
     steer: axis(['KeyA', 'ArrowLeft'], ['KeyD', 'ArrowRight']),
     turret: axis(['KeyZ', 'Comma'], ['KeyX', 'Period']),
+    pitch: axis(['KeyQ', 'PageUp'], ['KeyE', 'PageDown']),
     center: keys.has('KeyC') || keys.has('Slash'),
     fire: keys.has('Space'),
     boost: keys.has('Digit4') || keys.has('Numpad4'),
@@ -229,7 +230,7 @@ function drawHud() {
   const p = player.body.translation();
   hud.textContent =
     netLine +
-    `${player.hull.name} + ${player.gun.name}   ${player.dead > 0 ? `DESTROYED – back in ${player.dead.toFixed(1)} s` : `HP ${Math.ceil(player.hp)} / ${player.hull.hp}`}${player.shield > 0 ? '   shielded' : ''}${player.temp > 0.03 ? `   ON FIRE ${(player.temp * 100).toFixed(0)}%` : player.temp < -0.03 ? `   FROZEN ${(-player.temp * 100).toFixed(0)}%` : ''}${player.gun.kind === 'stream' ? `\n${player.gun.name === 'Ember' ? 'fuel ' : 'coolant '}${'█'.repeat(Math.round(player.energy * 12)).padEnd(12, '░')} ${(player.energy * 100).toFixed(0)}%` : ''}${player.boostLeft > 0 && !fullHud ? `   BOOST ${player.boostLeft.toFixed(0)} s` : ''}\n` +
+    `${player.hull.name} + ${player.gun.name}   gun ${player.gunPitch >= 0 ? '+' : ''}${(player.gunPitch * 57.2958).toFixed(0)}°   ${player.dead > 0 ? `DESTROYED – back in ${player.dead.toFixed(1)} s` : `HP ${Math.ceil(player.hp)} / ${player.hull.hp}`}${player.shield > 0 ? '   shielded' : ''}${player.temp > 0.03 ? `   ON FIRE ${(player.temp * 100).toFixed(0)}%` : player.temp < -0.03 ? `   FROZEN ${(-player.temp * 100).toFixed(0)}%` : ''}${player.gun.kind === 'stream' ? `\n${player.gun.name === 'Ember' ? 'fuel ' : 'coolant '}${'█'.repeat(Math.round(player.energy * 12)).padEnd(12, '░')} ${(player.energy * 100).toFixed(0)}%` : ''}${player.boostLeft > 0 && !fullHud ? `   BOOST ${player.boostLeft.toFixed(0)} s` : ''}\n` +
     (!fullHud ? '' :
     `speed    ${f(player.forwardSpeed, 2)} m/s   (top ${player.hull.topSpeed})${player.boostLeft > 0 ? `   BOOST ${player.boostLeft.toFixed(0)} s` : ''}\n` +
     `side     ${f(player.sideSpeed, 2)} m/s\n` +
@@ -329,6 +330,9 @@ buildGunFolder();
 const gun = gui.addFolder('Hits & respawn');
 gun.add(P, 'impactShove', 0, 1, 0.05).name('Hit shoves the target (0–1)');
 gun.add(P, 'impactTilt', 0, 1, 0.05).name('Hit rocks the target (0–1)');
+gun.add(P, 'pitchUp', 0, 60, 1).name('Gun raises to °');
+gun.add(P, 'pitchDown', 0, 30, 1).name('Gun lowers to °');
+gun.add(P, 'pitchSpeed', 5, 120, 1).name('Gun elevation speed °/s');
 gun.add(P, 'autoAimUp', 0, 25, 1).name('Auto-aim up °');
 gun.add(P, 'autoAimDown', 0, 25, 1).name('Auto-aim down °');
 gun.add(P, 'respawnTime', 0.5, 15, 0.5).name('Respawn after s');

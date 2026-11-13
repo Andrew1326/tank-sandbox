@@ -36,6 +36,7 @@ interface TankView {
   tank: Tank;
   group: THREE.Group;
   turret: THREE.Group;
+  tilt: THREE.Group;
   barrel: THREE.Group;
   muzzle: THREE.Object3D;
   left: Running;
@@ -201,7 +202,7 @@ export class View {
     this.scene.add(bar);
     const p = tank.body.translation();
     this.tanks.push({
-      tank, group, turret, barrel: built.barrel, muzzle: built.muzzle, left: hull.left, right: hull.right,
+      tank, group, turret, tilt: built.tilt, barrel: built.barrel, muzzle: built.muzzle, left: hull.left, right: hull.right,
       offPos: new THREE.Vector3(), offQuat: new THREE.Quaternion(), shown: null, mats, charge: built.charge, color,
       bar, barCanvas, barKey: '', name, recoil: 0, dust: 0, smoke: 0, marked: V(p), wasShielded: false, ice: [iceHull, iceTurret], burn: 0, laser: null,
     });
@@ -284,7 +285,7 @@ export class View {
       const shooter = this.tanks.find((t) => t.tank.id === s.by);
       if (s.k !== 2) {
         // Leaving the barrel: flash, smoke, kick and bang.
-        const dir = shooter ? new THREE.Vector3(0, 0, -1).applyQuaternion(shooter.turret.getWorldQuaternion(new THREE.Quaternion())) : to.clone().sub(from).normalize();
+        const dir = shooter ? new THREE.Vector3(0, 0, -1).applyQuaternion(shooter.muzzle.getWorldQuaternion(new THREE.Quaternion())) : to.clone().sub(from).normalize();
         const at = shooter ? shooter.muzzle.getWorldPosition(new THREE.Vector3()) : from;
         if (this.effects) this.fx.muzzle(at, dir, s.gun);
         if (shooter) shooter.recoil = 1;
@@ -361,7 +362,7 @@ export class View {
         this.scene.add(tv.laser);
       }
       const from = tv.muzzle.getWorldPosition(new THREE.Vector3());
-      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(tv.turret.getWorldQuaternion(new THREE.Quaternion()));
+      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(tv.muzzle.getWorldQuaternion(new THREE.Quaternion()));
       const hit = this.sim.world.castRay(new RAPIER.Ray(from, dir), t.gun.range, true, undefined, undefined, undefined, t.body);
       const len = hit ? hit.timeOfImpact : t.gun.range;
       tv.laser.visible = true;
@@ -389,7 +390,7 @@ export class View {
     // Stream guns: a rolling jet of fire or freezing fog from the nozzle.
     if (t.streaming) {
       const at = tv.muzzle.getWorldPosition(new THREE.Vector3());
-      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(tv.turret.getWorldQuaternion(new THREE.Quaternion()));
+      const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(tv.muzzle.getWorldQuaternion(new THREE.Quaternion()));
       const reach = t.gun.range, life = 0.42;
       const fire = t.gun.name === 'Ember';
       const n = Math.max(1, Math.round(dt * 110));
@@ -491,6 +492,7 @@ export class View {
       tv.group.position.add(tv.offPos);
       tv.group.quaternion.premultiply(tv.offQuat);
       tv.turret.rotation.y = t.prevTurret + (t.turretYaw - t.prevTurret) * alpha;
+      tv.tilt.rotation.x += (t.gunPitch - tv.tilt.rotation.x) * Math.min(1, dt * 25);
       this.animateTank(tv, dt, alpha, follow);
     }
     for (const cv of this.crates) {
@@ -565,7 +567,7 @@ export class View {
     if (fv && inScope) {
       // Scope view: the eye sits on the gun and the picture tightens as the shot builds.
       const t = fv.tank;
-      const quat = fv.turret.getWorldQuaternion(new THREE.Quaternion());
+      const quat = fv.muzzle.getWorldQuaternion(new THREE.Quaternion());
       const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
       const eye = fv.turret.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.56, -0.8).applyQuaternion(quat));
       const sway = (1 - t.charge) * 0.004; // settles as you hold

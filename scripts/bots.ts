@@ -124,6 +124,10 @@ function think(bot: Bot) {
     const q = target.body.translation();
     const aimErr = wrap(Math.atan2(-(q.x - p.x), -(q.z - p.z)) - yawOf(me) - me.turretYaw);
     input.turret = Math.abs(aimErr) > 0.02 ? Math.sign(aimErr) : 0;
+    // Raise or lower the gun to the target's height.
+    const flat = Math.hypot(q.x - p.x, q.z - p.z);
+    const lift = Math.atan2(q.y - p.y, flat) - me.gunPitch;
+    input.pitch = Math.abs(lift) > 0.01 ? Math.sign(lift) : 0;
     // A sniper holds the shot until it is mostly charged, then lets go.
     input.fire = me.gun.kind === 'sniper' ? Math.abs(aimErr) < 0.1 && me.charge < 0.7 : Math.abs(aimErr) < 0.06;
   } else {

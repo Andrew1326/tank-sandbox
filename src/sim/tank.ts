@@ -1,17 +1,18 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import type { GunParams, HullParams, SimParams } from './params';
-import { V3, Q, v3, add, sub, scale, dot, cross, norm, rot, clamp, qMul, qYaw, DEG } from './vec';
+import { V3, Q, v3, add, sub, scale, dot, cross, norm, rot, clamp, qMul, qYaw, qPitch, DEG } from './vec';
 
 export interface TankInput {
   throttle: number; // -1..1
   steer: number; // +1 = left
   turret: number; // +1 = left
+  pitch: number; // +1 = raise the gun
   center: boolean;
   fire: boolean;
   boost?: boolean;
 }
 
-export const noInput = (): TankInput => ({ throttle: 0, steer: 0, turret: 0, center: false, fire: false });
+export const noInput = (): TankInput => ({ throttle: 0, steer: 0, turret: 0, pitch: 0, center: false, fire: false });
 
 export interface ShotEvent {
   by: number;
@@ -29,7 +30,7 @@ export interface TankState {
   ty: number; tv: number; cd: number; pe: number; bo: number;
   lx: number; lz: number; pu: boolean;
   hp: number; de: number; iv: number; hm: V3; hy: number;
-  tp: number; en: number; sf: boolean; bb: number; ht: number;
+  tp: number; en: number; sf: boolean; bb: number; ht: number; gp: number;
 }
 
 export interface KillEvent {
@@ -114,6 +115,7 @@ export class Tank {
   homeYaw = 0;
   turretYaw = 0;
   turretVel = 0;
+  gunPitch = 0; // radians, + = raised
   rays: RayState[] = [];
   grounded = 0;
   forwardSpeed = 0;
@@ -219,7 +221,7 @@ export class Tank {
       ty: this.turretYaw, tv: this.turretVel, cd: this.cooldown, pe: this.pending, bo: this.boostLeft,
       lx: this.lastVx, lz: this.lastVz, pu: this.pushed,
       hp: this.hp, de: this.dead, iv: this.shield, hm: { ...this.home }, hy: this.homeYaw,
-      tp: this.temp, en: this.energy, sf: this.streaming, bb: this.burnBy, ht: this.hold,
+      tp: this.temp, en: this.energy, sf: this.streaming, bb: this.burnBy, ht: this.hold, gp: this.gunPitch,
     };
   }
 
@@ -232,7 +234,7 @@ export class Tank {
     this.turretYaw = s.ty; this.turretVel = s.tv; this.cooldown = s.cd; this.pending = s.pe; this.boostLeft = s.bo;
     this.lastVx = s.lx; this.lastVz = s.lz; this.pushed = s.pu;
     this.hp = s.hp; this.dead = s.de; this.shield = s.iv; this.home = { ...s.hm }; this.homeYaw = s.hy;
-    this.temp = s.tp; this.energy = s.en; this.streaming = s.sf; this.burnBy = s.bb; this.hold = s.ht;
+    this.temp = s.tp; this.energy = s.en; this.streaming = s.sf; this.burnBy = s.bb; this.hold = s.ht; this.gunPitch = s.gp;
     this.shotHit = false;
   }
 
@@ -258,6 +260,11 @@ export class Tank {
     return qMul(this.body.rotation(), qYaw(this.turretYaw));
   }
 
+  // Where the barrel points: the turret's facing plus the gun's elevation.
+  aimRotation(): Q {
+    return qMul(this.turretRotation(), qPitch(this.gunPitch));
+  }
+
   step(dt: number, input: TankInput, P: SimParams, ev: SimEvents) {
     const b = this.body;
     this.shield = Math.max(0, this.shield - dt);
@@ -271,6 +278,7 @@ export class Tank {
         this.hp = this.hull.hp;
         this.shield = P.spawnShield;
         this.turretYaw = this.turretVel = 0;
+        this.gunPitch = 0;
         this.boostLeft = 0;
         this.temp = 0;
         this.energy = 1;
@@ -446,6 +454,11 @@ export class Tank {
     const tA = this.gun.turretAccel * DEG * dt;
     this.turretVel += clamp(tTarget - this.turretVel, -tA, tA);
     this.turretYaw += this.turretVel * dt;
+    // Elevation: straight up and down at a steady rate, slower in the scope; centring levels it.
+    const pRate = P.pitchSpeed * DEG * chill * (scoped ? this.gun.scopeTurn : 1) * dt;
+    if (alive && input.pitch !== 0) this.gunPitch += clamp(input.pitch, -1, 1) * pRate;
+    else if (input.center) this.gunPitch -= clamp(this.gunPitch, -pRate, pRate);
+    this.gunPitch = clamp(this.gunPitch, -P.pitchDown * DEG, P.pitchUp * DEG);
 
     // Stream guns spray for as long as fire is held and the tank is not empty.
     if (this.gun.kind === 'stream') {
@@ -498,7 +511,7 @@ export class Tank {
       : this.gun;
     const q = b.rotation();
     const up = rot(q, v3(0, 1, 0));
-    const dir = rot(this.turretRotation(), v3(0, 0, -1));
+    const dir = rot(this.aimRotation(), v3(0, 0, -1));
     const pivot = add(b.translation(), scale(up, h.halfH + 0.3));
     const muzzle = add(pivot, scale(dir, h.halfL * 1.05));
     // Vertical auto-aim: the flattest ray in the allowed fan that finds a tank wins.
